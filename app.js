@@ -17,7 +17,22 @@ function getLocalDemoUserId() {
     localStorage.setItem(key, String(generated));
     return generated;
 }
-const currentUserId = tg?.initDataUnsafe?.user?.id || debugUserId || getLocalDemoUserId();
+function getTelegramUserId() {
+    const raw = tg?.initDataUnsafe?.user?.id;
+    const num = Number(raw);
+    return Number.isFinite(num) && num > 0 ? num : null;
+}
+async function resolveCurrentUserIdWithRetry(maxWaitMs = 1200) {
+    const started = Date.now();
+    let telegramId = getTelegramUserId();
+    while (!telegramId && tg && Date.now() - started < maxWaitMs) {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        telegramId = getTelegramUserId();
+    }
+    return telegramId || debugUserId || getLocalDemoUserId();
+}
+let currentUserId = getTelegramUserId() || debugUserId || null;
+let currentUserMode = currentUserId ? (getTelegramUserId() ? 'telegram' : 'debug') : 'pending';
 const icons = ['shopping-cart', 'zap', 'wifi', 'smartphone', 'car', 'home', 'gift', 'coffee', 'music', 'book', 'heart', 'smile', 'star', 'briefcase', 'credit-card', 'monitor', 'tool', 'truck', 'shopping-bag', 'banknote', 'pill', 'shirt'];
 
 function normalizeError(error) {
@@ -96,6 +111,42 @@ function logApp(level = 'info', scope = 'APP', error = null, extra = null) {
     console[method](`[${payload.level}] ${scope}`, payload);
     appendDebugLog(payload);
     return payload;
+}
+
+function showInfoBanner(message, tone = 'info') {
+    const bannerId = 'global-app-info-banner';
+    let banner = document.getElementById(bannerId);
+    const bg = tone === 'warn' ? 'rgba(120,53,15,0.96)' : 'rgba(30,41,59,0.96)';
+    const border = tone === 'warn' ? 'rgba(251,191,36,.35)' : 'rgba(96,165,250,.25)';
+
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = bannerId;
+        banner.style.cssText = [
+            'position:fixed',
+            'left:12px',
+            'right:12px',
+            'top:12px',
+            'z-index:99997',
+            `background:${bg}`,
+            'color:#fff',
+            `border:1px solid ${border}`,
+            'border-radius:16px',
+            'padding:12px 14px',
+            'box-shadow:0 12px 40px rgba(0,0,0,.35)',
+            'font-size:12px',
+            'line-height:1.45',
+            'backdrop-filter:blur(8px)'
+        ].join(';');
+        document.body.appendChild(banner);
+    }
+
+    banner.innerHTML = `
+        <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">
+            <div>${message}</div>
+            <button onclick="this.parentElement.parentElement.remove()" style="background:transparent;border:none;color:#fff;font-size:18px;cursor:pointer;line-height:1;">×</button>
+        </div>
+    `;
 }
 
 function showErrorBanner(title, error = null) {
@@ -232,6 +283,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, APP_INIT_TIMEOUT_MS + 1000);
 
     try {
+        if (tg?.ready) {
+            try { tg.ready(); } catch (readyErr) { logApp('warn', 'Telegram.ready', readyErr); }
+        }
+        currentUserId = await resolveCurrentUserIdWithRetry(APP_TIMEOUT_MS);
+        currentUserMode = getTelegramUserId() ? 'telegram' : (debugUserId ? 'debug' : 'demo');
+        logApp('info', 'UserContext', null, {
+            mode: currentUserMode,
+            currentUserId,
+            hasTelegramUser: !!getTelegramUserId(),
+            hasDebugUser: !!debugUserId
+        });
+
+        if (currentUserMode === 'debug') {
+            showInfoBanner(`Debug rejim: user_id = ${currentUserId}`, 'warn');
+        } else if (currentUserMode === 'demo') {
+            showInfoBanner("Telegram user topilmadi. Demo rejim ishlayapti — real ma'lumot uchun appni bot ichidan oching.", 'warn');
+        }
+
         if (window.lucide?.createIcons) lucide.createIcons();
         else logApp('warn', 'lucide', new Error('lucide.createIcons topilmadi'));
 
@@ -351,6 +420,18 @@ function setDashboardCurrency(curr) {
 async function fetchInitialData() {
     const client = getSupabase();
 
+    if (!currentUserId) {
+        currentUserId = await resolveCurrentUserIdWithRetry(APP_TIMEOUT_MS);
+        currentUserMode = getTelegramUserId() ? 'telegram' : (debugUserId ? 'debug' : 'demo');
+    }
+
+    logApp('info', 'fetchInitialData.start', null, {
+        currentUserId,
+        currentUserMode,
+        telegramUserId: getTelegramUserId(),
+        debugUserId
+    });
+
     let userData = null;
     const userRes = await withTimeout(client
         .from('users')
@@ -440,6 +521,14 @@ async function fetchInitialData() {
 
     updateHeaderProfile();
     updatePremiumUI();
+
+    if (currentUserMode !== 'telegram') {
+        logApp('warn', 'UserContext', new Error('App Telegram foydalanuvchisi bilan ochilmagan'), {
+            currentUserMode,
+            currentUserId,
+            hint: 'Telegram ichidan oching yoki ?debugUser=USER_ID ishlating'
+        });
+    }
 }
 
 async function initDefaultCategories() {
@@ -839,7 +928,12 @@ function updateHeaderProfile() {
     const displayName = currentUserProfile?.full_name || [tgUser?.first_name, tgUser?.last_name].filter(Boolean).join(' ').trim() || tgUser?.username || `User ${currentUserId}`;
     const initials = encodeURIComponent(displayName || 'User');
     if (nameEl) nameEl.innerText = displayName;
-    if (subEl) subEl.innerText = tgUser?.username ? `@${tgUser.username}` : (tg ? "Telegram foydalanuvchisi" : "Demo rejim");
+    if (subEl) {
+        if (tgUser?.username) subEl.innerText = `@${tgUser.username}`;
+        else if (currentUserMode === 'debug') subEl.innerText = `Debug user: ${currentUserId}`;
+        else if (currentUserMode === 'demo') subEl.innerText = `Demo user: ${currentUserId}`;
+        else subEl.innerText = tg ? "Telegram foydalanuvchisi" : "Demo rejim";
+    }
     if (avatarEl) avatarEl.src = `https://ui-avatars.com/api/?name=${initials}&background=3b82f6&color=fff`;
     if (badgeEl) {
         const premiumActive = isPremiumActive();
