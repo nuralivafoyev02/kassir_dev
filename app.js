@@ -4,10 +4,20 @@ const SUPABASE_URL = APP_CONFIG.SUPABASE_URL || "";
 const SUPABASE_KEY = APP_CONFIG.SUPABASE_ANON_KEY || "";
 const BOT_USERNAME = APP_CONFIG.BOT_USERNAME || "";
 const APP_DEBUG = APP_CONFIG.DEBUG !== false;
+const APP_TIMEOUT_MS = Number(APP_CONFIG.TIMEOUT_MS || 12000);
+const APP_INIT_TIMEOUT_MS = Number(APP_CONFIG.INIT_TIMEOUT_MS || 15000);
 const tg = window.Telegram?.WebApp || null;
 if (tg?.expand) tg.expand();
 const debugUserId = Number(new URLSearchParams(window.location.search).get('debugUser')) || null;
-const currentUserId = tg?.initDataUnsafe?.user?.id || debugUserId || 123456;
+function getLocalDemoUserId() {
+    const key = 'demo_user_id';
+    const saved = Number(localStorage.getItem(key));
+    if (saved) return saved;
+    const generated = Math.floor(100000 + Math.random() * 900000);
+    localStorage.setItem(key, String(generated));
+    return generated;
+}
+const currentUserId = tg?.initDataUnsafe?.user?.id || debugUserId || getLocalDemoUserId();
 const icons = ['shopping-cart', 'zap', 'wifi', 'smartphone', 'car', 'home', 'gift', 'coffee', 'music', 'book', 'heart', 'smile', 'star', 'briefcase', 'credit-card', 'monitor', 'tool', 'truck', 'shopping-bag', 'banknote', 'pill', 'shirt'];
 
 function normalizeError(error) {
@@ -21,6 +31,51 @@ function normalizeError(error) {
         hint: error.hint,
         status: error.status
     };
+}
+
+function ensureDebugPanel() {
+    if (!APP_DEBUG || typeof document === 'undefined' || !document.body) return null;
+    let panel = document.getElementById('app-debug-panel');
+    if (panel) return panel;
+    panel = document.createElement('details');
+    panel.id = 'app-debug-panel';
+    panel.style.cssText = [
+        'position:fixed',
+        'left:12px',
+        'right:12px',
+        'bottom:90px',
+        'z-index:99998',
+        'max-height:38vh',
+        'overflow:auto',
+        'background:rgba(2,6,23,.94)',
+        'border:1px solid rgba(51,65,85,.9)',
+        'border-radius:14px',
+        'color:#cbd5e1',
+        'font-size:11px',
+        'box-shadow:0 10px 35px rgba(0,0,0,.35)',
+        'padding:0'
+    ].join(';');
+    panel.innerHTML = `<summary style="cursor:pointer;padding:10px 12px;font-weight:700;color:#f8fafc;">Debug log</summary><div id="app-debug-log" style="padding:0 12px 12px;white-space:pre-wrap;"></div>`;
+    document.body.appendChild(panel);
+    return panel;
+}
+
+function appendDebugLog(entry) {
+    if (!APP_DEBUG || typeof document === 'undefined' || !document.body) return;
+    const panel = ensureDebugPanel();
+    const logBox = panel?.querySelector('#app-debug-log');
+    if (!logBox) return;
+    const row = document.createElement('div');
+    row.style.cssText = 'padding:6px 0;border-top:1px solid rgba(51,65,85,.45);';
+    row.textContent = JSON.stringify(entry, null, 2);
+    logBox.prepend(row);
+}
+
+function withTimeout(promise, scope = 'operation', timeoutMs = APP_TIMEOUT_MS) {
+    return Promise.race([
+        Promise.resolve(promise),
+        new Promise((_, reject) => setTimeout(() => reject(new Error(`${scope} timeout (${timeoutMs}ms)`)), timeoutMs))
+    ]);
 }
 
 function logApp(level = 'info', scope = 'APP', error = null, extra = null) {
@@ -39,6 +94,7 @@ function logApp(level = 'info', scope = 'APP', error = null, extra = null) {
         level === 'debug' ? 'debug' : 'log';
 
     console[method](`[${payload.level}] ${scope}`, payload);
+    appendDebugLog(payload);
     return payload;
 }
 
@@ -166,6 +222,14 @@ async function checkBiometricAvailability() {
 document.addEventListener('DOMContentLoaded', async () => {
     const skeleton = mustGetEl('dashboard-skeleton', { silent: true });
     const dashboard = mustGetEl('view-dashboard', { silent: true });
+    const initWatchdog = setTimeout(() => {
+        if (skeleton && !skeleton.classList.contains('hidden')) {
+            logApp('error', 'INIT_WATCHDOG', new Error('Initial load juda uzoq davom etdi'));
+            showErrorBanner("Mini app yuklanishi cho'zilib ketdi", new Error('Initial load timeout'));
+            skeleton.classList.add('hidden');
+            if (dashboard) dashboard.classList.remove('hidden');
+        }
+    }, APP_INIT_TIMEOUT_MS + 1000);
 
     try {
         if (window.lucide?.createIcons) lucide.createIcons();
@@ -199,7 +263,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (menu) menu.classList.add('hidden');
         });
 
-        await fetchInitialData();
+        await withTimeout(fetchInitialData(), 'fetchInitialData', APP_INIT_TIMEOUT_MS);
         updateUI();
         updateSettingsUI();
 
@@ -209,6 +273,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         logApp('error', 'DOMContentLoaded init', err);
         showErrorBanner("Mini app yuklanishda xatolik bo'ldi", err);
     } finally {
+        clearTimeout(initWatchdog);
         setTimeout(() => {
             if (skeleton) skeleton.classList.add('hidden');
             if (dashboard) dashboard.classList.remove('hidden');
@@ -287,11 +352,11 @@ async function fetchInitialData() {
     const client = getSupabase();
 
     let userData = null;
-    const userRes = await client
+    const userRes = await withTimeout(client
         .from('users')
         .select('user_id, full_name, exchange_rate, premium_status, premium_until')
         .eq('user_id', currentUserId)
-        .single();
+        .single(), 'users.select');
 
     if (userRes.error && userRes.error.code !== 'PGRST116') {
         logApp('error', 'users.select', userRes.error, { currentUserId });
@@ -308,17 +373,17 @@ async function fetchInitialData() {
             exchange_rate: Number(localStorage.getItem('exchangeRate')) || 12850
         };
 
-        const upsertRes = await client.from('users').upsert(payload, { onConflict: 'user_id' });
+        const upsertRes = await withTimeout(client.from('users').upsert(payload, { onConflict: 'user_id' }), 'users.upsert');
         if (upsertRes.error) {
             logApp('error', 'users.upsert', upsertRes.error, { payload });
             throw new Error(`Foydalanuvchini yaratishda xatolik: ${upsertRes.error.message}`);
         }
 
-        const result = await client
+        const result = await withTimeout(client
             .from('users')
             .select('user_id, full_name, exchange_rate, premium_status, premium_until')
             .eq('user_id', currentUserId)
-            .single();
+            .single(), 'users.reselect');
 
         if (result.error && result.error.code !== 'PGRST116') {
             logApp('error', 'users.reselect', result.error, { currentUserId });
@@ -343,11 +408,11 @@ async function fetchInitialData() {
         localStorage.setItem('exchangeRate', exchangeRate);
     }
 
-    const tRes = await client
+    const tRes = await withTimeout(client
         .from('transactions')
         .select('*')
         .eq('user_id', currentUserId)
-        .order('date', { ascending: false });
+        .order('date', { ascending: false }), 'transactions.select');
 
     if (tRes.error) {
         logApp('error', 'transactions.select', tRes.error, { currentUserId });
@@ -356,11 +421,11 @@ async function fetchInitialData() {
 
     if (tRes.data) transactions = tRes.data;
 
-    const cRes = await client
+    const cRes = await withTimeout(client
         .from('categories')
         .select('*')
         .eq('user_id', currentUserId)
-        .order('name', { ascending: true });
+        .order('name', { ascending: true }), 'categories.select');
 
     if (cRes.error) {
         logApp('error', 'categories.select', cRes.error, { currentUserId });
@@ -390,7 +455,7 @@ async function initDefaultCategories() {
         { name: "Kafe", icon: "coffee", type: "expense" }
     ];
     const all = [...default_income, ...default_expense].map(c => ({ ...c, user_id: currentUserId }));
-    const { error } = await client.from('categories').insert(all);
+    const { error } = await withTimeout(client.from('categories').insert(all), 'categories.insert_defaults');
     if (error) {
         logApp('error', 'categories.initDefault', error, { currentUserId });
         throw new Error(`Standart kategoriyalarni yaratishda xatolik: ${error.message}`);
@@ -435,14 +500,16 @@ async function confirmEditCat() {
     if (newName) {
         const cat = allCats[selCatType][selCatIndex]; const oldName = cat.name;
         allCats[selCatType][selCatIndex].name = newName; renderBotCats(selCatType); closeModal('edit-cat-modal');
-        await supabase.from('categories').update({ name: newName }).eq('user_id', currentUserId).eq('name', oldName).eq('type', selCatType);
+        const { error } = await withTimeout(getSupabase().from('categories').update({ name: newName }).eq('user_id', currentUserId).eq('name', oldName).eq('type', selCatType), 'categories.update');
+        if (error) throw error;
     }
 }
 async function deleteCatFromMenu() {
     if (confirm("Bu kategoriyani o'chirasizmi?")) {
         const catToDelete = allCats[selCatType][selCatIndex];
         allCats[selCatType].splice(selCatIndex, 1); renderBotCats(selCatType); document.getElementById('cat-context-menu').classList.add('hidden');
-        await supabase.from('categories').delete().eq('user_id', currentUserId).eq('name', catToDelete.name).eq('type', selCatType);
+        const { error } = await withTimeout(getSupabase().from('categories').delete().eq('user_id', currentUserId).eq('name', catToDelete.name).eq('type', selCatType), 'categories.delete');
+        if (error) throw error;
     }
 }
 
@@ -490,7 +557,7 @@ function handleReceiptUpload(e) {
 async function uploadReceipt(file) {
     const client = getSupabase();
     const fileName = `${currentUserId}/${Date.now()}.jpg`;
-    const { error } = await client.storage.from('receipts').upload(fileName, file);
+    const { error } = await withTimeout(client.storage.from('receipts').upload(fileName, file), 'storage.uploadReceipt');
     if (error) {
         logApp('error', 'storage.uploadReceipt', error, { fileName, fileType: file?.type, fileSize: file?.size });
         throw error;
@@ -722,7 +789,7 @@ async function submitBotInput() {
     
     draft = { receipt: null, rawFile: null };
     const client = getSupabase();
-    const { data, error } = await client.from('transactions').insert([newTrans]).select();
+    const { data, error } = await withTimeout(client.from('transactions').insert([newTrans]).select(), 'transactions.insert');
     if (error) {
         logApp('error', 'transactions.insert', error, { newTrans });
         transactions = transactions.filter(t => t.id !== tempId);
@@ -752,7 +819,7 @@ async function saveNewCategory() {
     renderBotCats(draft.type);
     closeModal('add-cat-modal');
     document.getElementById('new-cat-name').value = '';
-    const { error } = await supabase.from('categories').insert([newCat]);
+    const { error } = await withTimeout(getSupabase().from('categories').insert([newCat]), 'categories.insert');
     if (error) {
         console.error("Kategoriya saqlash xatoligi:", error);
         allCats[draft.type] = allCats[draft.type].filter(cat => cat !== newCat);
@@ -911,16 +978,16 @@ async function importData(e) {
             if (backup.exchangeRate) {
                 exchangeRate = Number(backup.exchangeRate);
                 localStorage.setItem('exchangeRate', exchangeRate);
-                await supabase.from('users').update({ exchange_rate: exchangeRate }).eq('user_id', currentUserId);
+                await withTimeout(getSupabase().from('users').update({ exchange_rate: exchangeRate }).eq('user_id', currentUserId), 'users.exchange_rate.import');
             }
             if (backup.transactions && Array.isArray(backup.transactions) && backup.transactions.length > 0) {
                 const newTrans = backup.transactions.map(t => { const { id, ...rest } = t; return { ...rest, user_id: currentUserId }; });
-                const { error } = await supabase.from('transactions').insert(newTrans);
+                const { error } = await withTimeout(getSupabase().from('transactions').insert(newTrans), 'transactions.import');
                 if (error) throw error;
             }
             if (backup.allCats) {
                 const mergedCats = [...(backup.allCats.income || []), ...(backup.allCats.expense || [])].map(({ id, ...rest }) => ({ ...rest, user_id: currentUserId }));
-                if (mergedCats.length) await supabase.from('categories').insert(mergedCats);
+                if (mergedCats.length) await withTimeout(getSupabase().from('categories').insert(mergedCats), 'categories.import');
             }
             alert("Muvaffaqiyatli! Dastur qayta yuklanmoqda..."); location.reload();
         } catch (err) {
@@ -961,13 +1028,13 @@ function openActionSheet(e, id) {
 function viewCurrentReceipt() { const t = transactions.find(x => x.id === selId); if (t) { const src = t.receipt_url || t.receipt; viewReceipt(src); } closeActionSheet(null); }
 function closeActionSheet(e) { if (e && !e.target.closest('.bg-slate-800') && e.target.id !== 'action-sheet') return; document.getElementById('action-sheet').classList.add('hidden'); }
 function handleDeleteConfirm() { closeActionSheet(null); document.getElementById('delete-modal').classList.remove('hidden'); }
-async function confirmDelete() { const idToDelete = selId; transactions = transactions.filter(t => t.id !== idToDelete); updateUI(); closeModal('delete-modal'); await supabase.from('transactions').delete().eq('id', idToDelete).eq('user_id', currentUserId); }
+async function confirmDelete() { const idToDelete = selId; transactions = transactions.filter(t => t.id !== idToDelete); updateUI(); closeModal('delete-modal'); const { error } = await withTimeout(getSupabase().from('transactions').delete().eq('id', idToDelete).eq('user_id', currentUserId), 'transactions.delete'); if (error) { logApp('error', 'transactions.delete', error, { idToDelete }); showErrorBanner("Operatsiyani o'chirishda xatolik", error); } }
 function handleEdit() { closeActionSheet(null); const t = transactions.find(x => x.id === selId); if (!t) return; document.getElementById('edit-category').value = t.category; document.getElementById('edit-amount').value = t.amount; document.getElementById('edit-type').value = t.type; document.getElementById('edit-modal').classList.remove('hidden'); }
 async function saveEdit() {
     const c = document.getElementById('edit-category').value, a = parseInt(document.getElementById('edit-amount').value), tp = document.getElementById('edit-type').value;
     if (c && a) {
         const i = transactions.findIndex(x => x.id === selId);
-        if (i !== -1) { transactions[i].category = c; transactions[i].amount = a; transactions[i].type = tp; updateUI(); await supabase.from('transactions').update({ category: c, amount: a, type: tp }).eq('id', selId).eq('user_id', currentUserId); }
+        if (i !== -1) { transactions[i].category = c; transactions[i].amount = a; transactions[i].type = tp; updateUI(); const { error } = await withTimeout(getSupabase().from('transactions').update({ category: c, amount: a, type: tp }).eq('id', selId).eq('user_id', currentUserId), 'transactions.update'); if (error) { logApp('error', 'transactions.update', error, { selId, c, a, tp }); showErrorBanner("Operatsiyani tahrirlashda xatolik", error); } }
     } closeModal('edit-modal');
 }
 // --- PDF ---
@@ -1019,10 +1086,10 @@ async function saveExchangeRate(val) {
         vibrate('light');
 
         // 2. Backendga (Supabase) saqlash
-        const { error } = await supabase
+        const { error } = await withTimeout(getSupabase()
             .from('users')
             .update({ exchange_rate: val })
-            .eq('user_id', currentUserId);
+            .eq('user_id', currentUserId), 'users.exchange_rate.update');
 
         if (!error && currentUserProfile) currentUserProfile.exchange_rate = Number(val);
         if (error) {

@@ -14,7 +14,7 @@ function buildWebhookUrl(req) {
 
 async function callTelegram(method, payload = {}) {
   const url = `https://api.telegram.org/bot${token}/${method}`;
-  const { data } = await axios.post(url, payload);
+  const { data } = await axios.post(url, payload, { timeout: Number(process.env.TELEGRAM_TIMEOUT_MS || 30000) });
   return data;
 }
 
@@ -41,6 +41,9 @@ module.exports = async (req, res) => {
 
     if (action === 'set') {
       const webhookUrl = buildWebhookUrl(req);
+      if (!/^https:\/\//i.test(webhookUrl)) {
+        return res.status(400).json({ ok: false, error: 'Webhook URL https bilan boshlanishi kerak', webhookUrl });
+      }
       const payload = {
         url: webhookUrl,
         allowed_updates: ['message', 'callback_query'],

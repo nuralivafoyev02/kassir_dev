@@ -1,4 +1,3 @@
-const TelegramBot = require('node-telegram-bot-api');
 const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
 const path = require('path');
@@ -8,7 +7,7 @@ const { OpenAI } = require('openai');
 const token = process.env.BOT_TOKEN;
 const supabaseUrl = process.env.SUPABASE_URL;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
-const creatorChatId = Number(process.env.BOT_CREATOR_CHAT_ID || 7894854944);
+const creatorChatId = Number(process.env.BOT_CREATOR_CHAT_ID || 0);
 const adminIds = (process.env.BOT_ADMIN_IDS || `${creatorChatId || ''}`)
   .split(',')
   .map((id) => Number(String(id).trim()))
@@ -25,13 +24,117 @@ if (!supabaseUrl || !serviceRoleKey) {
   throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
 }
 
-const bot = new TelegramBot(token, { polling: false });
+const TELEGRAM_API_BASE = `https://api.telegram.org/bot${token}`;
+const TELEGRAM_FILE_BASE = `https://api.telegram.org/file/bot${token}`;
+const TELEGRAM_TIMEOUT_MS = Number(process.env.TELEGRAM_TIMEOUT_MS || 30000);
+
 const supabase = createClient(supabaseUrl, serviceRoleKey, {
   auth: { persistSession: false }
 });
 const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   : null;
+
+function normalizeError(error) {
+  if (!error) return { message: 'Unknown error' };
+  if (typeof error === 'string') return { message: error };
+  return {
+    message: error.message || 'Unknown error',
+    code: error.code,
+    status: error.status,
+    details: error.details,
+    hint: error.hint,
+    response: error.response?.data || null,
+    stack: error.stack || null
+  };
+}
+
+function truncate(text = '', max = 3500) {
+  const str = String(text || '');
+  return str.length > max ? `${str.slice(0, max)}…` : str;
+}
+
+async function callTelegram(method, payload = {}) {
+  const url = `${TELEGRAM_API_BASE}/${method}`;
+  try {
+    const { data } = await axios.post(url, payload, {
+      timeout: TELEGRAM_TIMEOUT_MS,
+      headers: { 'Content-Type': 'application/json' }
+    });
+    if (!data?.ok) {
+      const err = new Error(data?.description || `Telegram API xatoligi: ${method}`);
+      err.response = { data };
+      throw err;
+    }
+    return data.result;
+  } catch (error) {
+    error.telegram_method = method;
+    throw error;
+  }
+}
+
+const bot = {
+  sendMessage(chatId, text, options = {}) {
+    return callTelegram('sendMessage', { chat_id: chatId, text, ...options });
+  },
+  sendPhoto(chatId, photo, options = {}) {
+    return callTelegram('sendPhoto', { chat_id: chatId, photo, ...options });
+  },
+  answerCallbackQuery(callbackQueryId, options = {}) {
+    return callTelegram('answerCallbackQuery', { callback_query_id: callbackQueryId, ...options });
+  },
+  editMessageText(text, options = {}) {
+    return callTelegram('editMessageText', { text, ...options });
+  },
+  editMessageReplyMarkup(replyMarkup, options = {}) {
+    return callTelegram('editMessageReplyMarkup', {
+      reply_markup: replyMarkup,
+      ...options
+    });
+  },
+  deleteMessage(chatId, messageId) {
+    return callTelegram('deleteMessage', { chat_id: chatId, message_id: messageId });
+  },
+  async getFileLink(fileId) {
+    const result = await callTelegram('getFile', { file_id: fileId });
+    if (!result?.file_path) throw new Error("Telegram fayl yo'li topilmadi");
+    return `${TELEGRAM_FILE_BASE}/${result.file_path}`;
+  }
+};
+
+async function notifyAdminError(scope, error, extra = {}) {
+  const payload = { scope, error: normalizeError(error), extra };
+  console.error(`[BOT:${scope}]`, payload);
+  if (!creatorChatId) return;
+  try {
+    await bot.sendMessage(creatorChatId, [
+      '⚠️ <b>Bot xatoligi</b>',
+      `🧩 <b>Bo'lim:</b> ${escapeHtml(scope)}`,
+      `📝 <b>Xabar:</b> ${escapeHtml(payload.error.message || 'Unknown error')}`,
+      payload.error.code ? `🔢 <b>Code:</b> ${escapeHtml(String(payload.error.code))}` : null,
+      payload.error.status ? `📡 <b>Status:</b> ${escapeHtml(String(payload.error.status))}` : null,
+      extra && Object.keys(extra).length ? `📦 <b>Extra:</b> <code>${escapeHtml(truncate(JSON.stringify(extra)))}</code>` : null
+    ].filter(Boolean).join('\n'), { parse_mode: 'HTML' });
+  } catch (notifyError) {
+    console.error('notifyAdminError failed:', notifyError.message);
+  }
+}
+
+function getUpdateChatId(update) {
+  return update?.message?.chat?.id || update?.callback_query?.message?.chat?.id || null;
+}
+
+async function safeUserError(chatId, title, error) {
+  if (!chatId) return;
+  const info = normalizeError(error);
+  try {
+    await bot.sendMessage(chatId, `⚠️ ${title}
+
+${truncate(info.message || "Noma'lum xatolik", 700)}`);
+  } catch (sendErr) {
+    console.error('safeUserError failed:', sendErr.message);
+  }
+}
 
 const GUIDE_TEXT = [
   '<b>📖 BOTDAN FOYDALANISH QO\'LLANMASI</b>',
@@ -89,6 +192,13 @@ function getPremiumStatus(user) {
   if (!user.premium_until) return { active: true, until: null };
   const until = new Date(user.premium_until);
   return { active: until.getTime() > Date.now(), until: user.premium_until };
+}
+
+function formatPremiumUntil(until) {
+  if (!until) return 'Cheklanmagan';
+  const date = new Date(until);
+  if (Number.isNaN(date.getTime())) return "Noma'lum sana";
+  return date.toLocaleDateString('uz-UZ');
 }
 
 function normalizeDuration(days) {
@@ -157,8 +267,7 @@ async function upsertUserFromTelegram(msg) {
     username: msg.from.username || null,
     full_name: [msg.from.first_name, msg.from.last_name].filter(Boolean).join(' ').trim() || msg.from.username || `User ${msg.from.id}`,
     language_code: msg.from.language_code || 'uz',
-    last_seen_at: new Date().toISOString(),
-    premium_status: 'free'
+    last_seen_at: new Date().toISOString()
   };
 
   await supabase.from('users').upsert(payload, { onConflict: 'user_id' });
@@ -295,7 +404,7 @@ async function showPremiumPlans(chatId, user) {
     '<b>💎 Premium obuna</b>',
     '',
     premiumStatus.active
-      ? `Sizda premium faol. Amal qilish muddati: <b>${new Date(premiumStatus.until).toLocaleDateString('uz-UZ')}</b>`
+      ? `Sizda premium faol. Amal qilish muddati: <b>${formatPremiumUntil(premiumStatus.until)}</b>`
       : 'Premium yoqilsa qo\'shimcha funksiyalar ochiladi:',
     '• Ovozli xabarni matnga aylantirish',
     '• Premium analitika',
@@ -330,6 +439,15 @@ async function getOpenPremiumRequest(userId) {
 }
 
 async function createOrReusePremiumRequest(userId, planId) {
+  const { data: plan, error: planError } = await supabase
+    .from('premium_plans')
+    .select('id, is_active')
+    .eq('id', planId)
+    .maybeSingle();
+
+  if (planError) throw planError;
+  if (!plan || !plan.is_active) throw new Error("Premium reja topilmadi yoki o'chirilgan");
+
   const openRequest = await getOpenPremiumRequest(userId);
   if (openRequest && Number(openRequest.plan_id) === Number(planId) && openRequest.status === 'awaiting_receipt') {
     return openRequest;
@@ -367,7 +485,11 @@ async function sendPremiumReceiptForReview(requestId) {
     .eq('id', requestId)
     .single();
 
-  if (!request || !creatorChatId) return;
+  if (!request) return;
+  if (!creatorChatId) {
+    await notifyAdminError('premium.creator_chat_missing', new Error('BOT_CREATOR_CHAT_ID yoqilmagan'), { requestId });
+    throw new Error('BOT_CREATOR_CHAT_ID sozlanmagan');
+  }
 
   const caption = [
     '💳 <b>Yangi premium to\'lov so\'rovi</b>',
@@ -588,7 +710,7 @@ async function buildPremiumAnalytics(userId) {
 }
 
 async function deleteLastTransaction(userId) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('transactions')
     .select('*')
     .eq('user_id', userId)
@@ -596,9 +718,11 @@ async function deleteLastTransaction(userId) {
     .limit(1)
     .maybeSingle();
 
+  if (error) throw error;
   if (!data) return null;
 
-  await supabase.from('transactions').delete().eq('id', data.id);
+  const { error: deleteError } = await supabase.from('transactions').delete().eq('id', data.id).eq('user_id', userId);
+  if (deleteError) throw deleteError;
   return data;
 }
 
@@ -677,7 +801,7 @@ async function handleCallbackQuery(query) {
     const premium = getPremiumStatus(user);
     await bot.answerCallbackQuery(query.id, {
       text: premium.active
-        ? `Premium faol. Amal qilish muddati: ${new Date(premium.until).toLocaleDateString('uz-UZ')}`
+        ? `Premium faol. Amal qilish muddati: ${formatPremiumUntil(premium.until)}`
         : 'Premium hali faol emas.',
       show_alert: true
     });
@@ -707,7 +831,7 @@ async function handleCallbackQuery(query) {
     const requestId = Number(data.split(':')[1]);
     const request = await grantPremium(requestId, userId);
     await bot.answerCallbackQuery(query.id, { text: 'Premium yoqildi ✅' });
-    await bot.sendMessage(request.user_id, `🎉 Premium yoqildi. Amal qilish muddati: <b>${new Date(request.approved_until).toLocaleDateString('uz-UZ')}</b>`, {
+    await bot.sendMessage(request.user_id, `🎉 Premium yoqildi. Amal qilish muddati: <b>${formatPremiumUntil(request.approved_until)}</b>`, {
       parse_mode: 'HTML',
       reply_markup: getMainKeyboard(true)
     });
@@ -780,7 +904,7 @@ async function handleMessage(msg) {
   if (text === '/status') {
     const premium = getPremiumStatus(user);
     await bot.sendMessage(msg.chat.id, premium.active
-      ? `💎 Premium faol. Amal qilish muddati: ${new Date(premium.until).toLocaleDateString('uz-UZ')}`
+      ? `💎 Premium faol. Amal qilish muddati: ${formatPremiumUntil(premium.until)}`
       : 'Siz hozir free tarifdasiz.');
     return;
   }
@@ -880,7 +1004,9 @@ module.exports = async (req, res) => {
       }
     }
 
-    const update = req.body || {};
+    const update = typeof req.body === 'string'
+      ? JSON.parse(req.body || '{}')
+      : (req.body || {});
 
     if (update.callback_query) {
       await handleCallbackQuery(update.callback_query);
@@ -894,7 +1020,10 @@ module.exports = async (req, res) => {
 
     return res.status(200).send('Ignored');
   } catch (error) {
-    console.error('Bot Error:', error);
+    await notifyAdminError('webhook.update', error, {
+      updateType: req?.body?.callback_query ? 'callback_query' : req?.body?.message ? 'message' : 'unknown'
+    });
+    await safeUserError(getUpdateChatId(typeof req.body === 'object' ? req.body : null), 'Botda xatolik yuz berdi', error);
     return res.status(500).send('Internal Server Error');
   }
 };
