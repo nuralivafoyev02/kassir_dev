@@ -1,36 +1,54 @@
 // --- CONFIG ---
-const APP_CONFIG = window.APP_CONFIG || {};
-const SUPABASE_URL = APP_CONFIG.SUPABASE_URL || "";
-const SUPABASE_KEY = APP_CONFIG.SUPABASE_ANON_KEY || "";
-const BOT_USERNAME = APP_CONFIG.BOT_USERNAME || "";
-const APP_DEBUG = APP_CONFIG.DEBUG !== false;
-const APP_TIMEOUT_MS = Number(APP_CONFIG.TIMEOUT_MS || 12000);
-const APP_INIT_TIMEOUT_MS = Number(APP_CONFIG.INIT_TIMEOUT_MS || 15000);
+let APP_CONFIG = {};
+let SUPABASE_URL = "";
+let SUPABASE_KEY = "";
+let BOT_USERNAME = "";
+let APP_DEBUG = true;
+let APP_TIMEOUT_MS = 12000;
+let APP_INIT_TIMEOUT_MS = 15000;
+
 const tg = window.Telegram?.WebApp || null;
 if (tg?.expand) tg.expand();
 const debugUserId = Number(new URLSearchParams(window.location.search).get('debugUser')) || null;
-function getLocalDemoUserId() {
-    const key = 'demo_user_id';
-    const saved = Number(localStorage.getItem(key));
-    if (saved) return saved;
-    const generated = Math.floor(100000 + Math.random() * 900000);
-    localStorage.setItem(key, String(generated));
-    return generated;
+
+function refreshRuntimeConfig() {
+    APP_CONFIG = window.APP_CONFIG || {};
+    SUPABASE_URL = APP_CONFIG.SUPABASE_URL || "";
+    SUPABASE_KEY = APP_CONFIG.SUPABASE_ANON_KEY || "";
+    BOT_USERNAME = APP_CONFIG.BOT_USERNAME || "";
+    APP_DEBUG = APP_CONFIG.DEBUG !== false;
+    APP_TIMEOUT_MS = Number(APP_CONFIG.TIMEOUT_MS || 12000);
+    APP_INIT_TIMEOUT_MS = Number(APP_CONFIG.INIT_TIMEOUT_MS || 15000);
+
+    return {
+        supabaseUrl: SUPABASE_URL,
+        supabaseKey: SUPABASE_KEY,
+        botUsername: BOT_USERNAME,
+        debug: APP_DEBUG,
+        timeoutMs: APP_TIMEOUT_MS,
+        initTimeoutMs: APP_INIT_TIMEOUT_MS
+    };
 }
+refreshRuntimeConfig();
+
 function getTelegramUserId() {
     const raw = tg?.initDataUnsafe?.user?.id;
     const num = Number(raw);
     return Number.isFinite(num) && num > 0 ? num : null;
 }
+
 async function resolveCurrentUserIdWithRetry(maxWaitMs = 1200) {
     const started = Date.now();
     let telegramId = getTelegramUserId();
+
     while (!telegramId && tg && Date.now() - started < maxWaitMs) {
         await new Promise((resolve) => setTimeout(resolve, 120));
         telegramId = getTelegramUserId();
     }
-    return telegramId || debugUserId || getLocalDemoUserId();
+
+    return telegramId || debugUserId || null;
 }
+
 let currentUserId = getTelegramUserId() || debugUserId || null;
 let currentUserMode = currentUserId ? (getTelegramUserId() ? 'telegram' : 'debug') : 'pending';
 const icons = ['shopping-cart', 'zap', 'wifi', 'smartphone', 'car', 'home', 'gift', 'coffee', 'music', 'book', 'heart', 'smile', 'star', 'briefcase', 'credit-card', 'monitor', 'tool', 'truck', 'shopping-bag', 'banknote', 'pill', 'shirt'];
@@ -221,25 +239,38 @@ function setClassSafe(id, value) {
 
 let supabase = null;
 
+async function waitForRuntimeDeps(timeoutMs = 8000) {
+    const started = Date.now();
+
+    while (Date.now() - started < timeoutMs) {
+        const cfg = refreshRuntimeConfig();
+        const hasSupabaseLib = !!window.supabase?.createClient;
+        const hasConfig = !!cfg.supabaseUrl && !!cfg.supabaseKey;
+
+        if (hasSupabaseLib && hasConfig) return cfg;
+        await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+
+    throw new Error('APP_CONFIG yoki Supabase script vaqtida yuklanmadi');
+}
+
 function initSupabaseClient() {
+    const cfg = refreshRuntimeConfig();
+
     if (!window.supabase || typeof window.supabase.createClient !== 'function') {
         throw new Error('Supabase client script yuklanmagan yoki window.supabase.createClient topilmadi');
     }
-    if (!SUPABASE_URL) throw new Error("SUPABASE_URL bo'sh");
-    if (!SUPABASE_KEY) throw new Error("SUPABASE_ANON_KEY bo'sh");
-    return window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    if (!cfg.supabaseUrl) throw new Error("SUPABASE_URL bo'sh");
+    if (!cfg.supabaseKey) throw new Error("SUPABASE_ANON_KEY bo'sh");
+
+    return window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey, {
+        auth: { persistSession: false }
+    });
 }
 
 function getSupabase() {
     if (!supabase) throw new Error('Supabase client hali ishga tushmagan');
     return supabase;
-}
-
-try {
-    supabase = initSupabaseClient();
-    logApp('debug', 'Supabase init', null, { hasUrl: !!SUPABASE_URL, hasKey: !!SUPABASE_KEY });
-} catch (err) {
-    logApp('error', 'Supabase init', err, { hasUrl: !!SUPABASE_URL, hasKey: !!SUPABASE_KEY });
 }
 
 
@@ -283,11 +314,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     }, APP_INIT_TIMEOUT_MS + 1000);
 
     try {
+        refreshRuntimeConfig();
+
         if (tg?.ready) {
             try { tg.ready(); } catch (readyErr) { logApp('warn', 'Telegram.ready', readyErr); }
         }
+
+        await waitForRuntimeDeps(APP_INIT_TIMEOUT_MS);
+        supabase = initSupabaseClient();
+        logApp('debug', 'Supabase init', null, { hasUrl: !!SUPABASE_URL, hasKey: !!SUPABASE_KEY });
+
         currentUserId = await resolveCurrentUserIdWithRetry(APP_TIMEOUT_MS);
-        currentUserMode = getTelegramUserId() ? 'telegram' : (debugUserId ? 'debug' : 'demo');
+        currentUserMode = getTelegramUserId() ? 'telegram' : (debugUserId ? 'debug' : 'missing');
+
         logApp('info', 'UserContext', null, {
             mode: currentUserMode,
             currentUserId,
@@ -295,10 +334,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             hasDebugUser: !!debugUserId
         });
 
+        if (!currentUserId) {
+            throw new Error("Telegram user aniqlanmadi. Mini appni bot ichidan oching yoki ?debugUser=USER_ID ishlating.");
+        }
+
         if (currentUserMode === 'debug') {
             showInfoBanner(`Debug rejim: user_id = ${currentUserId}`, 'warn');
-        } else if (currentUserMode === 'demo') {
-            showInfoBanner("Telegram user topilmadi. Demo rejim ishlayapti — real ma'lumot uchun appni bot ichidan oching.", 'warn');
         }
 
         if (window.lucide?.createIcons) lucide.createIcons();
@@ -391,28 +432,31 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 function setDashboardCurrency(curr) {
-    if (curr === dashboardCurrency) return; // O'zgarmasa qayt
+    if (curr === dashboardCurrency) return;
 
     dashboardCurrency = curr;
-    vibrate('medium'); // Tebranish beramiz
+    vibrate('medium');
 
-    // Animatsiya (swiper effekti)
-    const swiper = document.getElementById('balance-swiper');
+    const swiper = mustGetEl('balance-swiper', { silent: true });
+    const dotUzs = mustGetEl('dot-uzs', { silent: true });
+    const dotUsd = mustGetEl('dot-usd', { silent: true });
 
-    // Bir oz siljish effekti va qaytish
     if (curr === 'USD') {
-        swiper.style.transform = 'translateX(-10px)';
-        setTimeout(() => swiper.style.transform = 'translateX(0)', 150);
-        document.getElementById('dot-uzs').classList.remove('active');
-        document.getElementById('dot-usd').classList.add('active');
+        if (swiper) {
+            swiper.style.transform = 'translateX(-10px)';
+            setTimeout(() => swiper.style.transform = 'translateX(0)', 150);
+        }
+        if (dotUzs) dotUzs.classList.remove('active');
+        if (dotUsd) dotUsd.classList.add('active');
     } else {
-        swiper.style.transform = 'translateX(10px)';
-        setTimeout(() => swiper.style.transform = 'translateX(0)', 150);
-        document.getElementById('dot-usd').classList.remove('active');
-        document.getElementById('dot-uzs').classList.add('active');
+        if (swiper) {
+            swiper.style.transform = 'translateX(10px)';
+            setTimeout(() => swiper.style.transform = 'translateX(0)', 150);
+        }
+        if (dotUsd) dotUsd.classList.remove('active');
+        if (dotUzs) dotUzs.classList.add('active');
     }
 
-    // Ma'lumotlarni yangilash
     updateUI();
 }
 
@@ -422,7 +466,7 @@ async function fetchInitialData() {
 
     if (!currentUserId) {
         currentUserId = await resolveCurrentUserIdWithRetry(APP_TIMEOUT_MS);
-        currentUserMode = getTelegramUserId() ? 'telegram' : (debugUserId ? 'debug' : 'demo');
+        currentUserMode = getTelegramUserId() ? 'telegram' : (debugUserId ? 'debug' : 'missing');
     }
 
     logApp('info', 'fetchInitialData.start', null, {
@@ -664,29 +708,17 @@ function updateUI() {
     transactions.sort((a, b) => b.date - a.date);
     const f = transactions.filter(t => t.date >= s && t.date <= e);
 
-    // Asosiy hisob (Doim UZS da hisoblanadi)
     const incBase = f.filter(t => t.type === 'income').reduce((a, b) => a + (Number(b.amount) || 0), 0);
     const expBase = f.filter(t => t.type === 'expense').reduce((a, b) => a + (Number(b.amount) || 0), 0);
     const balBase = incBase - expBase;
 
-    // Ko'rsatish uchun konvertatsiya (VIEW LAYER)
-    let displayBal, displayInc, displayExp, suffix;
-
     if (dashboardCurrency === 'USD' && exchangeRate > 0) {
-        // Dollarga o'girib ko'rsatish
-        displayBal = (balBase / exchangeRate).toFixed(2);
-        displayInc = (incBase / exchangeRate).toFixed(2);
-        displayExp = (expBase / exchangeRate).toFixed(2);
-        suffix = "$";
-
-        // UI elementlarini yangilash
-        setTextSafe('total-balance', `$ ${formatNumber(displayBal)}`);
-        setTextSafe('total-income', `+$ ${formatNumber(displayInc)}`);
-        setTextSafe('total-expense', `-$ ${formatNumber(displayExp)}`);
+        setTextSafe('total-balance', `$ ${formatNumber((balBase / exchangeRate).toFixed(2))}`);
+        setTextSafe('total-income', `+$ ${formatNumber((incBase / exchangeRate).toFixed(2))}`);
+        setTextSafe('total-expense', `-$ ${formatNumber((expBase / exchangeRate).toFixed(2))}`);
         setTextSafe('currency-badge', "USD");
         setClassSafe('currency-badge', "text-[10px] bg-blue-500 px-1.5 py-0.5 rounded text-white font-mono");
     } else {
-        // So'mda ko'rsatish (Default)
         setTextSafe('total-balance', `${formatNumber(balBase)} so'm`);
         setTextSafe('total-income', `+${formatNumber(incBase)}`);
         setTextSafe('total-expense', `-${formatNumber(expBase)}`);
@@ -694,39 +726,69 @@ function updateUI() {
         setClassSafe('currency-badge', "text-[10px] bg-white/10 px-1.5 py-0.5 rounded text-white font-mono");
     }
 
-    // Trendlar va Diagrammalar (Bular foizda bo'lgani uchun o'zgartirish shart emas, lekin diagramma UZS da qoladi)
     updateTrendWidgets();
 
-    const ci = document.getElementById('card-income'), ce = document.getElementById('card-expense');
-    ci.className = `glass-panel p-3 rounded-2xl flex items-center gap-3 cursor-pointer transition-all ${activeType === 'income' ? 'bg-emerald-500/20 border-emerald-500' : 'hover:bg-emerald-500/10'}`;
-    ce.className = `glass-panel p-3 rounded-2xl flex items-center gap-3 cursor-pointer transition-all ${activeType === 'expense' ? 'bg-rose-500/20 border-rose-500' : 'hover:bg-rose-500/10'}`;
+    const ci = mustGetEl('card-income', { silent: true });
+    const ce = mustGetEl('card-expense', { silent: true });
+
+    if (ci) {
+        ci.className = `glass-panel p-3 rounded-2xl flex items-center gap-3 cursor-pointer transition-all ${activeType === 'income' ? 'bg-emerald-500/20 border-emerald-500' : 'hover:bg-emerald-500/10'}`;
+    }
+
+    if (ce) {
+        ce.className = `glass-panel p-3 rounded-2xl flex items-center gap-3 cursor-pointer transition-all ${activeType === 'expense' ? 'bg-rose-500/20 border-rose-500' : 'hover:bg-rose-500/10'}`;
+    }
 
     renderCharts(f);
-    renderHistory(); // Tarix o'zgarishsiz qoladi (Siz so'ragandek)
+    renderHistory();
 }
 
 function updateTrendWidgets() {
-    const now = new Date(); const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime(); const lastMonthEnd = thisMonthStart - 1;
+    const trendContainer = mustGetEl('trend-container', { silent: true });
+    const trendList = mustGetEl('trend-list', { silent: true });
+    if (!trendList) return;
+
+    const now = new Date();
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
+    const lastMonthEnd = thisMonthStart - 1;
+
     const thisMonthTrans = transactions.filter(t => t.date >= thisMonthStart && t.type === 'expense');
     const lastMonthTrans = transactions.filter(t => t.date >= lastMonthStart && t.date <= lastMonthEnd && t.type === 'expense');
-    const group = (arr) => arr.reduce((acc, t) => { acc[t.category] = (acc[t.category] || 0) + (Number(t.amount) || 0); return acc; }, {});
-    const curr = group(thisMonthTrans); const prev = group(lastMonthTrans);
-    let html = ''; const cats = [...new Set([...Object.keys(curr), ...Object.keys(prev)])];
-    if (cats.length > 0) {
-        document.getElementById('trend-container').classList.remove('hidden');
-        cats.forEach(c => {
-            const cVal = curr[c] || 0; const pVal = prev[c] || 0;
-            if (pVal > 0 && cVal > 0) {
-                const pct = ((cVal - pVal) / pVal) * 100;
-                if (Math.abs(pct) > 5) {
-                    const isBad = pct > 0; const color = isBad ? 'text-rose-400' : 'text-emerald-400'; const icon = isBad ? 'trending-up' : 'trending-down';
-                    html += `<div class="glass-panel p-3 rounded-xl flex justify-between items-center"><div><div class="text-xs text-slate-400">${c}</div><div class="font-bold text-sm text-white">${formatNumber(cVal)}</div></div><div class="text-right"><div class="${color} font-bold text-xs flex items-center gap-1 justify-end"><i data-lucide="${icon}" class="w-3 h-3"></i> ${Math.round(Math.abs(pct))}%</div><div class="text-xs text-slate-500">o'tgan oy</div></div></div>`;
-                }
-            }
-        });
+
+    const group = (arr) => arr.reduce((acc, t) => {
+        acc[t.category] = (acc[t.category] || 0) + (Number(t.amount) || 0);
+        return acc;
+    }, {});
+
+    const curr = group(thisMonthTrans);
+    const prev = group(lastMonthTrans);
+    const cats = [...new Set([...Object.keys(curr), ...Object.keys(prev)])];
+
+    let html = '';
+
+    if (cats.length > 0 && trendContainer) {
+        trendContainer.classList.remove('hidden');
     }
-    document.getElementById('trend-list').innerHTML = html || '<div class="col-span-2 text-center text-xs text-slate-500 py-2">Trendlar uchun ma\'lumot yetarli emas</div>';
+
+    cats.forEach(c => {
+        const cVal = curr[c] || 0;
+        const pVal = prev[c] || 0;
+
+        if (pVal > 0 && cVal > 0) {
+            const pct = ((cVal - pVal) / pVal) * 100;
+
+            if (Math.abs(pct) > 5) {
+                const isBad = pct > 0;
+                const color = isBad ? 'text-rose-400' : 'text-emerald-400';
+                const icon = isBad ? 'trending-up' : 'trending-down';
+
+                html += `<div class="glass-panel p-3 rounded-xl flex justify-between items-center"><div><div class="text-xs text-slate-400">${c}</div><div class="font-bold text-sm text-white">${formatNumber(cVal)}</div></div><div class="text-right"><div class="${color} font-bold text-xs flex items-center gap-1 justify-end"><i data-lucide="${icon}" class="w-3 h-3"></i> ${Math.round(Math.abs(pct))}%</div><div class="text-xs text-slate-500">o'tgan oy</div></div></div>`;
+            }
+        }
+    });
+
+    trendList.innerHTML = html || '<div class="col-span-2 text-center text-xs text-slate-500 py-2">Trendlar uchun ma\'lumot yetarli emas</div>';
 }
 function renderCharts(data) {
     const canvas = mustGetEl('categoryChart', { silent: true });
@@ -786,15 +848,21 @@ function renderCharts(data) {
         });
 }
 function renderHistory() {
-    const list = document.getElementById('history-list'); list.innerHTML = '';
-    document.getElementById('empty-history').classList.toggle('hidden', transactions.length > 0);
+    const list = mustGetEl('history-list', { silent: true });
+    const empty = mustGetEl('empty-history', { silent: true });
+    if (!list) return;
+
+    list.innerHTML = '';
+    if (empty) empty.classList.toggle('hidden', transactions.length > 0);
+
     transactions.forEach(t => {
         const isInc = t.type === 'income';
         const hasReceipt = t.receipt || t.receipt_url;
         const receiptBadge = hasReceipt ? `<span class="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 flex items-center gap-0.5"><i data-lucide="paperclip" class="w-2 h-2"></i> Chek</span>` : '';
         list.innerHTML += `<div onclick="openActionSheet(event, ${t.id})" class="glass-panel p-4 rounded-2xl flex justify-between items-center cursor-pointer active:scale-95 transition-transform hover:bg-slate-800/50"><div class="flex items-center gap-4"><div class="p-3 rounded-full ${isInc ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}"><i data-lucide="${isInc ? 'arrow-down-left' : 'arrow-up-right'}" class="w-5 h-5"></i></div><div><div class="font-bold text-sm text-white capitalize flex items-center">${t.category} ${receiptBadge}</div><div class="text-xs text-slate-400 mt-0.5">${new Date(t.date).toLocaleDateString()} • ${new Date(t.date).toLocaleTimeString().slice(0, 5)}</div></div></div><div class="font-bold ${isInc ? 'text-emerald-400' : 'text-rose-400'} text-base">${isInc ? '+' : '-'}${formatNumber(t.amount)}</div></div>`;
     });
-    lucide.createIcons();
+
+    if (window.lucide?.createIcons) lucide.createIcons();
 }
 // --- BOT ---
 function startBotFlow(type) { draft = { type, category: '', amount: 0, receipt: null, rawFile: null }; clearReceipt(); document.getElementById('bot-start-actions').classList.add('hidden'); document.getElementById('category-selector').classList.remove('hidden'); renderBotCats(type); }
@@ -931,8 +999,8 @@ function updateHeaderProfile() {
     if (subEl) {
         if (tgUser?.username) subEl.innerText = `@${tgUser.username}`;
         else if (currentUserMode === 'debug') subEl.innerText = `Debug user: ${currentUserId}`;
-        else if (currentUserMode === 'demo') subEl.innerText = `Demo user: ${currentUserId}`;
-        else subEl.innerText = tg ? "Telegram foydalanuvchisi" : "Demo rejim";
+        else if (currentUserMode === 'missing') subEl.innerText = "Telegram user topilmadi";
+        else subEl.innerText = tg ? "Telegram foydalanuvchisi" : "Web rejim";
     }
     if (avatarEl) avatarEl.src = `https://ui-avatars.com/api/?name=${initials}&background=3b82f6&color=fff`;
     if (badgeEl) {
