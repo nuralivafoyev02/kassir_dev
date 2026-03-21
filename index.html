@@ -147,7 +147,7 @@
             <div id="no-data"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                 <path d="M21.21 15.89A10 10 0 1 1 8 2.83" />
                 <path d="M22 12A10 10 0 0 0 12 2v10z" />
-              </svg>Ma'lumot yo'q</div>
+              </svg>Hozircha ma'lumot yo'q</div>
           </div>
           <div id="cat-table"></div>
         </div>
@@ -359,59 +359,262 @@
     </div>
   </div>
   <div class="ov" id="ov-settings" onclick="closeOv('ov-settings',event)">
-    <div class="sheet" onclick="event.stopPropagation()" style="padding-bottom:40px">
+    <div class="sheet stg-sheet" onclick="event.stopPropagation()">
       <div class="sh-hdl"></div>
-      <div class="sh-ttl">⚙️ Sozlamalar</div>
-      <div class="si">
-        <div>
-          <div class="si-l">Valyuta kursi</div>
-          <div class="si-s">1 USD = ? UZS</div>
-        </div><input class="si-i" id="rate-in" type="text" inputmode="decimal" placeholder="12850"
-          oninput="handleRateInput(this)" onchange="saveRate(getCleanAmount(this.value))">
-      </div>
-      <div class="si">
-        <div>
-          <div class="si-l">PIN Kod</div>
-          <div class="si-s" id="pin-status">O'rnatilmagan</div>
-        </div><button class="si-a" onclick="setupPin()">O'rnatish</button>
-      </div>
-      <div style="padding:4px 0 8px"><button id="pin-rm-b" class="pin-rm" onclick="removePin()">— PIN ni
-          o'chirish</button></div>
-      <div class="si" id="bio-row" style="display:none">
-        <div>
-          <div class="si-l">Biometrik</div>
-          <div class="si-s">Face ID / Touch ID</div>
+      <button class="sh-close" onclick="closeOv('ov-settings')">✕</button>
+      <div class="sh-ttl" data-i18n="settings_title">⚙️ Sozlamalar</div>
+
+      <!-- PROFIL -->
+      <div class="stg-profile">
+        <div class="stg-avatar" id="stg-avatar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         </div>
-        <div class="tgl" id="bio-tgl" onclick="toggleBio()"></div>
+        <div class="stg-name" id="stg-user-name">—</div>
+        <div class="stg-sub-info" id="stg-sub-info" data-i18n="stg_coming_soon">Tez orada</div>
       </div>
-      <div class="si">
-        <div>
-          <div class="si-l">Mavzu</div>
-          <div class="si-s">Tungi / Kunduzgi</div>
-        </div><button class="si-a" onclick="toggleTheme()">🌙 Almashtirish</button>
+
+      <!-- GURUH: PROFIL -->
+      <div class="stg-group">
+        <div class="stg-item" onclick="openStgSub('stg-sub-profile')">
+          <div class="stg-ico">👤</div>
+          <div class="stg-txt" data-i18n="stg_edit_profile">Profilni tahrirlash</div>
+          <div class="stg-arrow">›</div>
+        </div>
+        <div class="stg-item stg-disabled">
+          <div class="stg-ico">🌐</div>
+          <div class="stg-txt" data-i18n="stg_subscription">Obuna holati</div>
+          <span class="stg-badge" data-i18n="stg_coming_soon">Tez orada</span>
+        </div>
       </div>
-      <div style="height:1px;background:var(--border);margin:16px 0"></div>
-      <div
-        style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:0.8px;text-transform:uppercase;margin-bottom:12px">
-        Ma'lumotlar</div><button class="dbtn" onclick="doExport()"><svg viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-          <polyline points="7 10 12 15 17 10" />
-          <line x1="12" y1="15" x2="12" y2="3" />
-        </svg>JSON Eksport</button><label class="dbtn" style="cursor:pointer"><svg viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-          <polyline points="17 8 12 3 7 8" />
-          <line x1="12" y1="3" x2="12" y2="15" />
-        </svg>JSON Import<input type="file" accept=".json" style="display:none"
-          onchange="doImport(event)"></label><button class="dbtn red" onclick="resetData()"><svg viewBox="0 0 24 24"
-          fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="3 6 5 6 21 6" />
-          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-        </svg>Barcha ma'lumotlarni o'chirish</button><button class="bcl" style="margin-top:16px;width:100%"
-        onclick="closeOv('ov-settings')">Yopish</button>
+
+      <!-- GURUH: UMUMIY -->
+      <div class="stg-group">
+        <div class="stg-item" onclick="openTgGroup()">
+          <div class="stg-ico">✈️</div>
+          <div class="stg-txt" data-i18n="stg_tg_group">Telegram guruh</div>
+          <div class="stg-arrow">›</div>
+        </div>
+        <div class="stg-item" onclick="openStgSub('stg-sub-rate')">
+          <div class="stg-ico">💱</div>
+          <div class="stg-txt" data-i18n="stg_balance">Balanslar</div>
+          <div class="stg-arrow">›</div>
+        </div>
+        <div class="stg-item" onclick="openStgSub('stg-sub-cats')">
+          <div class="stg-ico">📂</div>
+          <div class="stg-txt" data-i18n="stg_categories">Kategoriyalar</div>
+          <div class="stg-arrow">›</div>
+        </div>
+        <div class="stg-item stg-disabled">
+          <div class="stg-ico">👥</div>
+          <div class="stg-txt" data-i18n="stg_friends">Do'stlar</div>
+          <span class="stg-badge" data-i18n="stg_coming_soon">Tez orada</span>
+        </div>
+        <div class="stg-item stg-disabled">
+          <div class="stg-ico">🔔</div>
+          <div class="stg-txt" data-i18n="stg_notifications">Bildirishnomalar</div>
+          <span class="stg-badge" data-i18n="stg_coming_soon">Tez orada</span>
+        </div>
+      </div>
+
+      <!-- GURUH: HISOBOTLAR -->
+      <div class="stg-group">
+        <div class="stg-item" onclick="openExport()">
+          <div class="stg-ico">📥</div>
+          <div class="stg-txt" data-i18n="stg_download_report">Hisobotni yuklab olish</div>
+          <div class="stg-arrow">›</div>
+        </div>
+        <div class="stg-item" onclick="resetData()">
+          <div class="stg-ico">🗑️</div>
+          <div class="stg-txt stg-danger" data-i18n="stg_clear_data">Hisobotlarni tozalash</div>
+          <div class="stg-arrow">›</div>
+        </div>
+      </div>
+
+      <!-- GURUH: HAQIDA -->
+      <div class="stg-group">
+        <div class="stg-item" onclick="openStgSub('stg-sub-guide')">
+          <div class="stg-ico">📖</div>
+          <div class="stg-txt" data-i18n="stg_guide">Foydalanish yo'riqnomasi</div>
+          <div class="stg-arrow">›</div>
+        </div>
+        <div class="stg-item" onclick="openStgSub('stg-sub-lang')">
+          <div class="stg-ico">🌍</div>
+          <div class="stg-txt" data-i18n="stg_language">Tilni o'zgartirish</div>
+          <div class="stg-arrow">›</div>
+        </div>
+      </div>
+
+      <!-- GURUH: YORDAM -->
+      <div class="stg-group">
+        <div class="stg-item" onclick="openSupport()">
+          <div class="stg-ico">💬</div>
+          <div class="stg-txt" data-i18n="stg_support">Qo'llab-quvvatlash</div>
+          <div class="stg-arrow">›</div>
+        </div>
+        <div class="stg-item" onclick="openStgSub('stg-sub-terms')">
+          <div class="stg-ico">📋</div>
+          <div class="stg-txt" data-i18n="stg_terms">Bizning shartlar</div>
+          <div class="stg-arrow">›</div>
+        </div>
+        <div class="stg-item" onclick="openStgSub('stg-sub-privacy')">
+          <div class="stg-ico">🛡️</div>
+          <div class="stg-txt" data-i18n="stg_privacy">Maxfiylik siyosati</div>
+          <div class="stg-arrow">›</div>
+        </div>
+      </div>
+
+      <!-- GURUH: XAVFSIZLIK -->
+      <div class="stg-group">
+        <div class="stg-item">
+          <div class="stg-ico">🔐</div>
+          <div class="stg-info">
+            <div class="stg-txt" data-i18n="stg_pin">PIN Kod</div>
+            <div class="stg-sub" id="stg-pin-status" data-i18n="stg_pin_not_set">O'rnatilmagan</div>
+          </div>
+          <button class="stg-action-btn" onclick="setupPin()" data-i18n="stg_pin_setup">O'rnatish</button>
+        </div>
+        <div class="stg-item" id="stg-pin-rm-row" style="display:none">
+          <div class="stg-ico">❌</div>
+          <div class="stg-txt stg-danger" data-i18n="stg_pin_remove" onclick="removePin()">PIN ni o'chirish</div>
+        </div>
+        <div class="stg-item" id="stg-bio-row" style="display:none">
+          <div class="stg-ico">👆</div>
+          <div class="stg-info">
+            <div class="stg-txt" data-i18n="stg_biometric">Biometrik</div>
+            <div class="stg-sub" data-i18n="stg_biometric_sub">Face ID / Touch ID</div>
+          </div>
+          <div class="tgl" id="stg-bio-tgl" onclick="toggleBio()"></div>
+        </div>
+        <div class="stg-item">
+          <div class="stg-ico" id="stg-theme-ico">🌙</div>
+          <div class="stg-info">
+            <div class="stg-txt" data-i18n="stg_theme">Mavzu</div>
+            <div class="stg-sub" data-i18n="stg_theme_sub">Tungi / Kunduzgi</div>
+          </div>
+          <button class="stg-action-btn" onclick="toggleTheme()" data-i18n="stg_theme_toggle">Almashtirish</button>
+        </div>
+      </div>
+
+      <!-- GURUH: DATA -->
+      <div class="stg-group">
+        <div class="stg-item" onclick="doExport()">
+          <div class="stg-ico">📤</div>
+          <div class="stg-txt" data-i18n="stg_export_json">JSON Eksport</div>
+          <div class="stg-arrow">›</div>
+        </div>
+        <label class="stg-item" style="cursor:pointer">
+          <div class="stg-ico">📥</div>
+          <div class="stg-txt" data-i18n="stg_import_json">JSON Import</div>
+          <input type="file" accept=".json" style="display:none" onchange="doImport(event)">
+          <div class="stg-arrow">›</div>
+        </label>
+      </div>
+
+      <div style="height:40px"></div>
     </div>
   </div>
+
+  <!-- SETTINGS SUBPAGES -->
+  <div class="ov" id="stg-sub-profile" onclick="closeOv('stg-sub-profile',event)">
+    <div class="sheet stg-sheet" onclick="event.stopPropagation()">
+      <div class="sh-hdl"></div>
+      <button class="sh-close" onclick="closeOv('stg-sub-profile')">✕</button>
+      <div class="sh-ttl" data-i18n="stg_edit_profile">Profilni tahrirlash</div>
+      <div class="stg-profile">
+        <div class="stg-avatar lg" id="stg-avatar-edit">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        </div>
+      </div>
+      <div class="fld"><label data-i18n="new_cat_name">Ism</label><input id="stg-name-in" type="text" placeholder="Ismingiz..."></div>
+      <button class="bpri" style="width:100%;margin-top:16px" onclick="saveProfile()" data-i18n="save">Saqlash</button>
+    </div>
+  </div>
+
+  <div class="ov" id="stg-sub-rate" onclick="closeOv('stg-sub-rate',event)">
+    <div class="sheet stg-sheet" onclick="event.stopPropagation()">
+      <div class="sh-hdl"></div>
+      <button class="sh-close" onclick="closeOv('stg-sub-rate')">✕</button>
+      <div class="sh-ttl" data-i18n="stg_balance">💱 Balanslar</div>
+      <div class="fld">
+        <label data-i18n="stg_rate_sub">1 USD = ? UZS</label>
+        <input class="si-i" id="stg-rate-in" type="text" inputmode="decimal" placeholder="12850"
+          oninput="handleRateInput(this)" onchange="saveRate(getCleanAmount(this.value))">
+      </div>
+    </div>
+  </div>
+
+  <div class="ov" id="stg-sub-cats" onclick="closeOv('stg-sub-cats',event)">
+    <div class="sheet stg-sheet" onclick="event.stopPropagation()">
+      <div class="sh-hdl"></div>
+      <button class="sh-close" onclick="closeOv('stg-sub-cats')">✕</button>
+      <div class="sh-ttl" data-i18n="stg_categories">📂 Kategoriyalar</div>
+      <div class="stg-cat-tabs">
+        <button class="stg-cat-tab active" id="stg-cat-inc-tab" onclick="stgCatTab('income')">📈 <span data-i18n="income">Kirim</span></button>
+        <button class="stg-cat-tab" id="stg-cat-exp-tab" onclick="stgCatTab('expense')">📉 <span data-i18n="expense">Chiqim</span></button>
+      </div>
+      <div id="stg-cat-list"></div>
+      <button class="bpri" style="width:100%;margin-top:16px" onclick="openAddCatFromStg()">
+        + <span data-i18n="add_new_cat">Yangi kategoriya</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="ov" id="stg-sub-lang" onclick="closeOv('stg-sub-lang',event)">
+    <div class="sheet stg-sheet" onclick="event.stopPropagation()">
+      <div class="sh-hdl"></div>
+      <button class="sh-close" onclick="closeOv('stg-sub-lang')">✕</button>
+      <div class="sh-ttl" data-i18n="stg_language">🌍 Tilni o'zgartirish</div>
+      <div class="stg-group" style="margin-top:8px">
+        <div class="stg-item stg-lang-opt" data-lang="uz" onclick="changeLang('uz')">
+          <div class="stg-ico">🇺🇿</div>
+          <div class="stg-txt">O'zbek tili</div>
+          <div class="stg-check" id="lang-check-uz">✓</div>
+        </div>
+        <div class="stg-item stg-lang-opt" data-lang="ru" onclick="changeLang('ru')">
+          <div class="stg-ico">🇷🇺</div>
+          <div class="stg-txt">Русский</div>
+          <div class="stg-check" id="lang-check-ru"></div>
+        </div>
+        <div class="stg-item stg-lang-opt" data-lang="en" onclick="changeLang('en')">
+          <div class="stg-ico">🇬🇧</div>
+          <div class="stg-txt">English</div>
+          <div class="stg-check" id="lang-check-en"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="ov center" id="stg-sub-terms" onclick="closeOv('stg-sub-terms',event)">
+    <div class="sheet c" onclick="event.stopPropagation()" style="max-height:80vh;overflow-y:auto">
+      <div class="sh-ttl" data-i18n="terms_title">📋 Bizning shartlar</div>
+      <div class="stg-legal-text" id="stg-terms-text"></div>
+      <button class="bcl" style="width:100%;margin-top:16px" onclick="closeOv('stg-sub-terms')" data-i18n="stg_close">Yopish</button>
+    </div>
+  </div>
+
+  <div class="ov center" id="stg-sub-privacy" onclick="closeOv('stg-sub-privacy',event)">
+    <div class="sheet c" onclick="event.stopPropagation()" style="max-height:80vh;overflow-y:auto">
+      <div class="sh-ttl" data-i18n="privacy_title">🛡️ Maxfiylik siyosati</div>
+      <div class="stg-legal-text" id="stg-privacy-text"></div>
+      <button class="bcl" style="width:100%;margin-top:16px" onclick="closeOv('stg-sub-privacy')" data-i18n="stg_close">Yopish</button>
+    </div>
+  </div>
+
+  <div class="ov center" id="stg-sub-guide" onclick="closeOv('stg-sub-guide',event)">
+    <div class="sheet c" onclick="event.stopPropagation()" style="max-height:80vh;overflow-y:auto">
+      <div class="sh-ttl">📖 Foydalanish yo'riqnomasi</div>
+      <div class="stg-legal-text">
+        <p><strong>Kassa</strong> — shaxsiy moliyaviy boshqaruv ilovasi.</p>
+        <p>📌 <strong>Kirim/Chiqim qo'shish:</strong> Pastdagi "+" tugmasini bosing, turini tanlang, kategoriyani belgilang va summani kiriting.</p>
+        <p>📊 <strong>Hisobotlar:</strong> Bosh sahifada diagramma va trendlarni ko'ring. Sana filtri orqali ma'lum davr uchun ko'ring.</p>
+        <p>📱 <strong>Telegram bot:</strong> Botga xabar yozing (masalan: "500 ming ovqat chiqim") va tranzaksiya avtomatik saqlanadi.</p>
+        <p>🔐 <strong>Xavfsizlik:</strong> PIN kod va Face ID/Touch ID orqali ilovangizni himoyalang.</p>
+        <p>📤 <strong>Eksport:</strong> Ma'lumotlarni JSON formatida saqlash yoki PDF hisobot yaratish mumkin.</p>
+      </div>
+      <button class="bcl" style="width:100%;margin-top:16px" onclick="closeOv('stg-sub-guide')" data-i18n="stg_close">Yopish</button>
+    </div>
+  </div>
+
   <div id="ctx-menu"><button class="ctx-i blue" onclick="ctxEdit()"><svg viewBox="0 0 24 24" fill="none"
         stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />

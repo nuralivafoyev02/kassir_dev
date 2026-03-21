@@ -205,8 +205,13 @@ function hideLoader() {
     showErr("Telegram user_id topilmadi. URLga ?user_id=123 qo'shing.");
   }
 
+  // i18n tizimini yuklash
+  await loadLang(currentLang);
+  applyLang();
+
   renderAll();
   updateSettingsUI();
+  initSettingsUI();
   hideLoader();
   initSwipe();
 })();
@@ -338,12 +343,12 @@ function goTab(tab) {
     console.log('[goTab]', tab);
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.querySelectorAll('.nb').forEach(b => b.classList.remove('active'));
-    
+
     const v = $('view-' + tab);
     const n = $('nb-' + tab);
     if (v) v.classList.add('active');
     if (n) n.classList.add('active');
-    
+
     if (tab === 'dash') renderAll();
     if (tab === 'hist') {
       renderHistory();
@@ -366,7 +371,7 @@ async function loadMore() {
     const { data, error } = await db.from('transactions').select('*')
       .eq('user_id', UID).order('date', { ascending: false })
       .range(histOffset, histOffset + 19);
-    
+
     if (error) throw error;
     const items = normAll(data);
     if (items.length > 0) {
@@ -1088,6 +1093,7 @@ function toggleBio() {
 function openSettings() { updateSettingsUI(); showOv('ov-settings'); }
 
 function updateSettingsUI() {
+  // Legacy check for old IDs (kept for compatibility)
   const ps = $('pin-status'), rb = $('pin-rm-b'), ri = $('rate-in');
   const br = $('bio-row'), bt = $('bio-tgl');
   if (ps) ps.textContent = pin ? 'Faol ✅' : 'O\'rnatilmagan';
@@ -1095,6 +1101,9 @@ function updateSettingsUI() {
   if (ri) ri.value = rate ? fmt(rate).replace(/\s/g, ' ') : '';
   if (br) br.style.display = tg?.BiometricManager?.isBiometricAvailable ? 'flex' : 'none';
   if (bt) bt.classList.toggle('on', tg?.BiometricManager?.isBiometricTokenSaved);
+  // New settings UI
+  updatePinUI();
+  updateThemeIcon();
 }
 
 async function saveRate(v) {
@@ -1130,10 +1139,12 @@ async function saveRate(v) {
 function toggleTheme() {
   document.body.classList.toggle('light');
   store.set('theme', document.body.classList.contains('light') ? 'light' : 'dark');
+  updateThemeIcon();
 }
 
 // ─── EXPORT / IMPORT ─────────────────────────────────────
 function openExport() {
+  closeOv('ov-settings');
   const now = new Date(), first = new Date(now.getFullYear(), now.getMonth(), 1);
   $('ex-from').valueAsDate = first;
   $('ex-to').valueAsDate = now;
@@ -1160,7 +1171,7 @@ async function makePDF() {
   if (!sStr || !eStr) return;
   const s = new Date(sStr).getTime(), e = new Date(eStr).getTime() + 86400000;
   const data = txList.filter(t => t.ms >= s && t.ms < e).sort((a, b) => a.ms - b.ms);
-  if (!data.length) { showErr("Ma'lumot yo'q"); return; }
+  if (!data.length) { showErr("Hozircha ma'lumot yo'q"); return; }
 
   const doc = new jsPDF(), pw = doc.internal.pageSize.width;
   doc.setFillColor(10, 10, 15); doc.rect(0, 0, pw, 38, 'F');
@@ -1242,6 +1253,185 @@ function resetData() {
   });
 }
 
+// ─── I18N (INTERNATIONALIZATION) ─────────────────────────
+let currentLang = store.get('lang') || 'uz';
+let T = {};
+
+async function loadLang(lang) {
+  try {
+    const res = await fetch(`./lang/${lang}.json`);
+    if (!res.ok) throw new Error('Lang file not found');
+    T = await res.json();
+    currentLang = lang;
+    store.set('lang', lang);
+  } catch (e) {
+    console.warn('[i18n] Failed to load lang:', lang, e);
+    // fallback silently
+  }
+}
+
+function t(key) {
+  return T[key] || key;
+}
+
+function applyLang() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.dataset.i18n;
+    if (T[key]) el.textContent = T[key];
+  });
+  // Update lang checkmarks
+  ['uz', 'ru', 'en'].forEach(l => {
+    const check = $(`lang-check-${l}`);
+    if (check) check.textContent = l === currentLang ? '✓' : '';
+  });
+}
+
+async function changeLang(lang) {
+  await loadLang(lang);
+  applyLang();
+  closeOv('stg-sub-lang');
+  vib('light');
+}
+
+// ─── SETTINGS SUB-PAGES ─────────────────────────────────
+function openStgSub(id) {
+  showOv(id);
+  // Pre-fill data
+  if (id === 'stg-sub-profile') {
+    const nameIn = $('stg-name-in');
+    if (nameIn) nameIn.value = store.get('display_name') || tg?.initDataUnsafe?.user?.first_name || '';
+  }
+  if (id === 'stg-sub-rate') {
+    const rateIn = $('stg-rate-in');
+    if (rateIn) rateIn.value = fmt(rate);
+  }
+  if (id === 'stg-sub-cats') {
+    stgCatTab('income');
+  }
+  if (id === 'stg-sub-terms') {
+    const el = $('stg-terms-text');
+    if (el) el.textContent = (T.terms_text || '').replace(/\\n/g, '\n');
+  }
+  if (id === 'stg-sub-privacy') {
+    const el = $('stg-privacy-text');
+    if (el) el.textContent = (T.privacy_text || '').replace(/\\n/g, '\n');
+  }
+}
+
+// ─── PROFILE ────────────────────────────────────────────
+function saveProfile() {
+  const name = $('stg-name-in')?.value.trim();
+  if (!name) return;
+  store.set('display_name', name);
+  const nameEl = $('stg-user-name');
+  if (nameEl) nameEl.textContent = name;
+  closeOv('stg-sub-profile');
+  vib('light');
+  if (db) {
+    db.from('users').update({ full_name: name }).eq('user_id', UID).then(({ error }) => {
+      if (error) console.error('[saveProfile]', error);
+    });
+  }
+}
+
+function initSettingsUI() {
+  // User name
+  const userName = store.get('display_name') || tg?.initDataUnsafe?.user?.first_name || '—';
+  const nameEl = $('stg-user-name');
+  if (nameEl) nameEl.textContent = userName;
+
+  // Theme icon
+  updateThemeIcon();
+
+  // PIN status
+  updatePinUI();
+
+  // Biometric
+  const canBio = tg?.BiometricManager?.isBiometricAvailable;
+  const bioRow = $('stg-bio-row');
+  if (bioRow) bioRow.style.display = canBio ? 'flex' : 'none';
+  const bioTgl = $('stg-bio-tgl');
+  if (bioTgl && bioOn) bioTgl.classList.add('on');
+}
+
+function updatePinUI() {
+  const status = $('stg-pin-status');
+  const rmRow = $('stg-pin-rm-row');
+  if (pin) {
+    if (status) status.textContent = t('stg_pin_set');
+    if (rmRow) rmRow.style.display = 'flex';
+  } else {
+    if (status) status.textContent = t('stg_pin_not_set');
+    if (rmRow) rmRow.style.display = 'none';
+  }
+}
+
+function updateThemeIcon() {
+  const ico = $('stg-theme-ico');
+  if (ico) ico.textContent = document.body.classList.contains('light') ? '☀️' : '🌙';
+}
+
+// ─── CATEGORIES IN SETTINGS ─────────────────────────────
+let stgCatType = 'income';
+
+function stgCatTab(type) {
+  stgCatType = type;
+  $('stg-cat-inc-tab')?.classList.toggle('active', type === 'income');
+  $('stg-cat-exp-tab')?.classList.toggle('active', type === 'expense');
+  renderStgCats();
+}
+
+function renderStgCats() {
+  const list = $('stg-cat-list');
+  if (!list) return;
+  const items = cats[stgCatType] || [];
+  if (items.length === 0) {
+    list.innerHTML = `<div style="text-align:center;padding:24px;color:var(--muted);font-size:13px">${t('no_data')}</div>`;
+    return;
+  }
+  list.innerHTML = items.map((c, i) => `
+    <div class="stg-cat-item">
+      <div class="sti-ico">${svgIcon(c.icon || 'star')}</div>
+      <div class="sti-name">${esc(c.name)}</div>
+      <button class="sti-del" onclick="delStgCat(${i})">✕</button>
+    </div>
+  `).join('');
+}
+
+async function delStgCat(idx) {
+  const cat = cats[stgCatType]?.[idx];
+  if (!cat || !confirm(`"${cat.name}" ni o'chirasizmi?`)) return;
+  cats[stgCatType].splice(idx, 1);
+  renderStgCats();
+  if (db && cat.id) await db.from('categories').delete().eq('id', cat.id).eq('user_id', UID);
+}
+
+function openAddCatFromStg() {
+  draft.type = stgCatType;
+  openAddCat();
+}
+
+// ─── EXTERNAL LINKS ─────────────────────────────────────
+function openTgGroup() {
+  const url = 'https://t.me/meningkassam_community';
+  if (tg?.openTelegramLink) {
+    tg.openTelegramLink(url);
+  } else {
+    window.open(url, '_blank');
+  }
+}
+
+function openSupport() {
+  const url = 'https://t.me/uyqur_nurali';
+  if (tg?.openTelegramLink) {
+    tg.openTelegramLink(url);
+  } else {
+    window.open(url, '_blank');
+  }
+}
+
+
+
 // ─── GLOBAL ERROR HANDLER ────────────────────────────────
 window.addEventListener('unhandledrejection', e => {
   console.error('[unhandled]', e.reason);
@@ -1249,3 +1439,4 @@ window.addEventListener('unhandledrejection', e => {
 window.addEventListener('error', e => {
   console.error('[error]', e.message);
 });
+
