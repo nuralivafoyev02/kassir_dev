@@ -1,4 +1,4 @@
-export default async (_req, res) => {
+module.exports = async (_req, res) => {
   // SUPABASE_ANON_KEY bo'lmasa SUPABASE_KEY ishlatiladi (dev fallback)
   const anonKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || '';
 
