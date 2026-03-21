@@ -109,6 +109,13 @@ let histOffset = 0;
 let hasMoreTx = true;
 let loadingMore = false;
 
+const profileState = {
+  fullName: store.get('display_name') || '',
+  username: tg?.initDataUnsafe?.user?.username || '',
+  phone: '',
+  photoUrl: tg?.initDataUnsafe?.user?.photo_url || ''
+};
+
 // ─── HELPERS ────────────────────────────────────────────
 const fmt = n => {
   const v = Number(n);
@@ -137,6 +144,60 @@ function showErr(msg, dur = 4000) {
   el.textContent = msg;
   el.style.display = 'block';
   setTimeout(() => { el.style.display = 'none'; }, dur);
+}
+
+function getTgUser() {
+  return tg?.initDataUnsafe?.user || null;
+}
+
+function normalizeName(v) {
+  return String(v || '').replace(/\s+/g, ' ').trim();
+}
+
+function getDisplayName() {
+  const tgUser = getTgUser();
+  const tgName = [tgUser?.first_name, tgUser?.last_name].filter(Boolean).join(' ').trim();
+  return normalizeName(profileState.fullName) || tgName || `User ${UID}`;
+}
+
+function getProfileMeta() {
+  const parts = [];
+  if (profileState.username) parts.push(`@${profileState.username}`);
+  if (profileState.phone) parts.push(profileState.phone);
+  if (UID) parts.push(`ID ${UID}`);
+  return parts.join(' • ');
+}
+
+function getInitials(name) {
+  const parts = normalizeName(name).split(' ').filter(Boolean).slice(0, 2);
+  const initials = parts.map(p => p[0]?.toUpperCase()).join('');
+  return initials || 'U';
+}
+
+function setAvatar(elId) {
+  const el = $(elId);
+  if (!el) return;
+  const name = getDisplayName();
+  const photoUrl = profileState.photoUrl || '';
+  if (photoUrl) {
+    el.innerHTML = `<img src="${photoUrl}" alt="${name}">`;
+    el.classList.add('has-photo');
+    return;
+  }
+  el.classList.remove('has-photo');
+  el.innerHTML = `<span class="stg-avatar-initials">${getInitials(name)}</span>`;
+}
+
+function renderProfileUI() {
+  const displayName = getDisplayName();
+  const nameEl = $('stg-user-name');
+  const subEl = $('stg-sub-info');
+  const inputEl = $('stg-name-in');
+  if (nameEl) nameEl.textContent = displayName;
+  if (subEl) subEl.textContent = getProfileMeta() || 'Telegram foydalanuvchisi';
+  if (inputEl && !document.activeElement?.isSameNode(inputEl)) inputEl.value = displayName;
+  setAvatar('stg-avatar');
+  setAvatar('stg-avatar-edit');
 }
 
 function addMsg(text, isUser = false) {
@@ -293,18 +354,63 @@ async function loadConfig() {
 
 // ─── SUPABASE CALLS ─────────────────────────────────────
 async function ensureUser() {
-  const name = [tg?.initDataUnsafe?.user?.first_name, tg?.initDataUnsafe?.user?.last_name]
-    .filter(Boolean).join(' ').trim() || `User ${UID}`;
-  const { error } = await db.from('users').upsert(
-    { user_id: UID, full_name: name },
-    { onConflict: 'user_id' }
-  );
-  if (error) throw error;
+  const tgUser = getTgUser();
+  const tgName = [tgUser?.first_name, tgUser?.last_name].filter(Boolean).join(' ').trim() || `User ${UID}`;
+  profileState.username = tgUser?.username || profileState.username || '';
+  profileState.photoUrl = tgUser?.photo_url || profileState.photoUrl || '';
+
+  const { data: existing, error: ue } = await db
+    .from('users')
+    .select('user_id, full_name, phone_number')
+    .eq('user_id', UID)
+    .maybeSingle();
+
+  if (ue) throw ue;
+
+  if (!existing) {
+    const row = {
+      user_id: UID,
+      full_name: tgName,
+      phone_number: null,
+    };
+    const { error: ie } = await db.from('users').insert(row);
+    if (ie) throw ie;
+    profileState.fullName = row.full_name;
+    profileState.phone = row.phone_number || '';
+    store.set('display_name', profileState.fullName);
+    renderProfileUI();
+    return;
+  }
+
+  profileState.fullName = normalizeName(existing.full_name) || tgName;
+  profileState.phone = existing.phone_number || '';
+  store.set('display_name', profileState.fullName);
+
+  if (!normalizeName(existing.full_name)) {
+    db.from('users').update({ full_name: tgName }).eq('user_id', UID).then(() => { }).catch(() => { });
+  }
+
+  renderProfileUI();
 }
 
 async function loadData() {
-  const { data: u } = await db.from('users').select('exchange_rate').eq('user_id', UID).maybeSingle();
-  if (u?.exchange_rate) { rate = Number(u.exchange_rate) || rate; store.set('rate', rate); }
+  const { data: u, error: ue } = await db
+    .from('users')
+    .select('exchange_rate, full_name, phone_number')
+    .eq('user_id', UID)
+    .maybeSingle();
+  if (ue) throw ue;
+
+  if (u?.exchange_rate) {
+    rate = Number(u.exchange_rate) || rate;
+    store.set('rate', rate);
+  }
+  if (u) {
+    profileState.fullName = normalizeName(u.full_name) || profileState.fullName;
+    profileState.phone = u.phone_number || profileState.phone || '';
+    if (profileState.fullName) store.set('display_name', profileState.fullName);
+    renderProfileUI();
+  }
 
   const { data: tx, error: te } = await db.from('transactions').select('*')
     .eq('user_id', UID).order('date', { ascending: false }).range(0, 19);
@@ -1399,6 +1505,7 @@ function applyLang() {
     if (check) check.textContent = l === currentLang ? '✓' : '';
   });
   document.documentElement.lang = currentLang === 'ru' ? 'ru' : currentLang === 'en' ? 'en' : 'uz';
+  renderProfileUI();
 }
 
 async function changeLang(lang) {
@@ -1419,7 +1526,8 @@ function openStgSub(id) {
   // Pre-fill data
   if (id === 'stg-sub-profile') {
     const nameIn = $('stg-name-in');
-    if (nameIn) nameIn.value = store.get('display_name') || tg?.initDataUnsafe?.user?.first_name || '';
+    if (nameIn) nameIn.value = getDisplayName();
+    renderProfileUI();
   }
   if (id === 'stg-sub-rate') {
     const rateIn = $('stg-rate-in');
@@ -1442,26 +1550,37 @@ function openStgSub(id) {
 }
 
 // ─── PROFILE ────────────────────────────────────────────
-function saveProfile() {
-  const name = $('stg-name-in')?.value.trim();
-  if (!name) return;
+async function saveProfile() {
+  const raw = $('stg-name-in')?.value || '';
+  const name = normalizeName(raw);
+  if (!name) {
+    showErr(t('err_profile_name_required') || 'Ism kiritilmadi');
+    return;
+  }
+
+  const prevName = profileState.fullName;
+  profileState.fullName = name;
   store.set('display_name', name);
-  const nameEl = $('stg-user-name');
-  if (nameEl) nameEl.textContent = name;
+  renderProfileUI();
+
+  if (db) {
+    const { error } = await db.from('users').update({ full_name: name }).eq('user_id', UID);
+    if (error) {
+      profileState.fullName = prevName;
+      store.set('display_name', prevName || '');
+      renderProfileUI();
+      showErr((t('err_profile_save') || 'Profilni saqlashda xatolik') + (error.message ? ': ' + error.message : ''));
+      return;
+    }
+  }
+
   closeOv('stg-sub-profile');
   vib('light');
-  if (db) {
-    db.from('users').update({ full_name: name }).eq('user_id', UID).then(({ error }) => {
-      if (error) console.error('[saveProfile]', error);
-    });
-  }
+  showErr(t('profile_saved') || 'Profil saqlandi ✅');
 }
 
 function initSettingsUI() {
-  // User name
-  const userName = store.get('display_name') || tg?.initDataUnsafe?.user?.first_name || '—';
-  const nameEl = $('stg-user-name');
-  if (nameEl) nameEl.textContent = userName;
+  renderProfileUI();
 
   // Theme icon
   updateThemeIcon();
@@ -1474,6 +1593,7 @@ function initSettingsUI() {
   const bioRow = $('stg-bio-row');
   if (bioRow) bioRow.style.display = canBio ? 'flex' : 'none';
 }
+
 
 function updatePinUI() {
   const status = $('stg-pin-status');
