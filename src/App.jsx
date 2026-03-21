@@ -5,25 +5,22 @@ import { Navigation } from './components/Layout/Navigation';
 import { Dashboard } from './components/Dashboard/Dashboard';
 import { HistoryView } from './components/History/HistoryView';
 import { AddTransaction } from './components/Dashboard/AddTransaction';
-import { SettingsView } from './components/Settings/SettingsView';
+import { SettingsModal } from './components/Layout/SettingsModal';
 import { PINScreen } from './components/Auth/PINScreen';
 import { Loader } from './components/Shared/Loader';
 import { ErrorBar } from './components/Shared/ErrorBar';
 import './index.css';
 
 function AppContent() {
-  const { loading, pin, userId, showAlert } = useApp();
+  const { loading, pin, userId } = useApp();
   const [activeView, setActiveView] = useState('dash');
   const [isUnlocked, setIsUnlocked] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const errorBarRef = useRef();
 
   useEffect(() => {
     if (!pin) setIsUnlocked(true);
   }, [pin]);
-
-  const handleOpenSettings = () => {
-    setActiveView('settings');
-  };
 
   if (loading && !userId) {
     return <Loader loading={true} />;
@@ -35,7 +32,7 @@ function AppContent() {
 
   return (
     <div className="app-container">
-      <Header onOpenSettings={handleOpenSettings} />
+      <Header onOpenSettings={() => setIsSettingsOpen(true)} />
       
       <main id="views">
         {activeView === 'dash' && <Dashboard />}
@@ -46,11 +43,11 @@ function AppContent() {
             onSave={() => setActiveView('dash')} 
           />
         )}
-        {activeView === 'settings' && <SettingsView onClose={() => setActiveView('dash')} />}
-        {activeView === 'stats' && <div className="view active">Stats View (Work in Progress)</div>}
       </main>
 
       <Navigation activeView={activeView} onViewChange={setActiveView} />
+      
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
       
       <Loader loading={loading} />
       <ErrorBar ref={errorBarRef} />

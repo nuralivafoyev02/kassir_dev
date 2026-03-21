@@ -12,6 +12,8 @@ export function AppProvider({ children }) {
   const [userProfile, setUserProfile] = useState(null);
   const [exchangeRate, setExchangeRate] = useState(12850);
   const [pin, setPin] = useState(localStorage.getItem('kassa_pin'));
+  const [dateFilter, setDateFilter] = useState('all'); // all, today, week, month
+  const [typeFilter, setTypeFilter] = useState('all'); // all, income, expense
   
   const fetchAll = useCallback(async () => {
     if (!userId) return;
@@ -51,10 +53,34 @@ export function AppProvider({ children }) {
     if (userId) fetchAll();
   }, [userId, fetchAll]);
 
+  const filteredTransactions = transactions.filter(t => {
+    let matchesType = typeFilter === 'all' || t.type === typeFilter;
+    if (!matchesType) return false;
+
+    if (dateFilter === 'all') return true;
+
+    const tDate = new Date(t.date);
+    const now = new Date();
+    
+    if (dateFilter === 'today') {
+      return tDate.toDateString() === now.toDateString();
+    }
+    if (dateFilter === 'week') {
+      const weekAgo = new Date();
+      weekAgo.setDate(now.getDate() - 7);
+      return tDate >= weekAgo;
+    }
+    if (dateFilter === 'month') {
+      return tDate.getMonth() === now.getMonth() && tDate.getFullYear() === now.getFullYear();
+    }
+    return true;
+  });
+
   const value = {
     loading,
     setLoading,
     transactions,
+    filteredTransactions,
     setTransactions,
     categories,
     setCategories,
@@ -63,6 +89,10 @@ export function AppProvider({ children }) {
     setExchangeRate,
     pin,
     setPin,
+    dateFilter,
+    setDateFilter,
+    typeFilter,
+    setTypeFilter,
     fetchAll,
     userId,
     tgUser

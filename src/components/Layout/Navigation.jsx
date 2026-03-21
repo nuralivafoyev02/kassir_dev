@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, History, Plus, BarChart3 } from 'lucide-react';
+import { Home, History, Plus } from 'lucide-react';
 
 export function Navigation({ activeView, onViewChange }) {
   return (
@@ -9,7 +9,14 @@ export function Navigation({ activeView, onViewChange }) {
         onClick={() => onViewChange('dash')}
       >
         <Home />
-        <span>Asosiy</span>
+        <span>Bosh</span>
+      </button>
+
+      <button className={`nb ${activeView === 'add' ? 'active' : ''}`} onClick={() => onViewChange('add')}>
+        <div className="add-ring">
+          <Plus />
+        </div>
+        <p className="add-btn-txt">Qo'shish</p>
       </button>
       
       <button 
@@ -18,21 +25,6 @@ export function Navigation({ activeView, onViewChange }) {
       >
         <History />
         <span>Tarix</span>
-      </button>
-
-      <button className="nb" onClick={() => onViewChange('add')}>
-        <div className="add-ring">
-          <Plus />
-        </div>
-        <span className="add-btn-txt">Qo'shish</span>
-      </button>
-
-      <button 
-        className={`nb ${activeView === 'stats' ? 'active' : ''}`} 
-        onClick={() => onViewChange('stats')}
-      >
-        <BarChart3 />
-        <span>Statistika</span>
       </button>
     </nav>
   );

@@ -4,14 +4,14 @@ import { useApp } from '../../store/AppContext';
 import { fmt } from '../../utils/formatters';
 
 export function BalanceCard() {
-  const { transactions, exchangeRate, loading } = useApp();
+  const { filteredTransactions, exchangeRate, loading } = useApp();
   const [showUsd, setShowUsd] = useState(false);
 
-  const totalIncome = transactions
+  const totalIncome = filteredTransactions
     .filter(t => t.type === 'income')
     .reduce((sum, t) => sum + t.amount, 0);
     
-  const totalExpense = transactions
+  const totalExpense = filteredTransactions
     .filter(t => t.type === 'expense')
     .reduce((sum, t) => sum + t.amount, 0);
 
