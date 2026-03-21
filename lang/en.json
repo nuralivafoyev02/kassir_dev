@@ -130,6 +130,10 @@
   "pin_bio_btn": "Biometrics",
   "pin_cancel": "Cancel",
 
+  "err_rate_invalid": "Invalid exchange rate!",
+  "hist_receipt": "Receipt",
+  "suffix_uzs": "UZS",
+
   "loading_1": "Loading...",
   "loading_2": "Setting up...",
   "loading_3": "Almost ready...",

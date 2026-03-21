@@ -130,6 +130,10 @@
   "pin_bio_btn": "Биометрия",
   "pin_cancel": "Отмена",
 
+  "err_rate_invalid": "Неверное значение курса!",
+  "hist_receipt": "Чек",
+  "suffix_uzs": "сум",
+
   "loading_1": "Загрузка...",
   "loading_2": "Настройка...",
   "loading_3": "Почти готово...",

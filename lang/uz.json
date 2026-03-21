@@ -130,6 +130,10 @@
   "pin_bio_btn": "Biometrik",
   "pin_cancel": "Bekor qilish",
 
+  "err_rate_invalid": "Noto'g'ri kurs qiymati!",
+  "hist_receipt": "Chek",
+  "suffix_uzs": "so'm",
+
   "loading_1": "Yuklanmoqda...",
   "loading_2": "Sozlanyapti...",
   "loading_3": "Deyarli tayyor...",

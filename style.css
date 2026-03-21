@@ -1205,7 +1205,7 @@ body {
 #pin-screen {
     position: fixed;
     inset: 0;
-    z-index: 100;
+    z-index: 250;
     background: var(--bg);
     background-image:
         radial-gradient(circle at top left, rgba(26, 16, 51, 0.8) 0%, transparent 50%),
@@ -1697,10 +1697,33 @@ body.light .sh-close:hover {
 }
 
 /* ─── NEW SETTINGS ───────────────────────────── */
+/* Sozlamalar — butun ekran (Telegram WebApp) */
+#ov-settings.ov {
+    align-items: stretch;
+    justify-content: flex-start;
+    padding: 0;
+}
+
+#ov-settings .stg-sheet {
+    width: 100%;
+    max-width: none;
+    min-height: 100vh;
+    min-height: 100dvh;
+    max-height: none;
+    height: auto;
+    margin: 0;
+    padding-top: calc(12px + var(--safe-top));
+    padding-bottom: calc(40px + var(--safe-bottom));
+    box-shadow: none;
+}
+
 .stg-sheet {
     padding-bottom: 40px;
-    max-height: 92vh;
+    max-height: 100vh;
+    height: 100vh;
     overflow-y: auto;
+    border-radius: 0 !important;
+    border: none !important;
 }
 
 .stg-profile {

@@ -99,6 +99,10 @@ let inputCur = 'UZS';
 let pinMode = 'unlock';
 let pinBuf = '';
 let pinTemp = '';
+/** PIN oqimi sozlamalardan boshlanganida bekor qilganda asosiy sahifa yopilmasin */
+let pinContext = null;
+/** USD kursi tahriri — bekor qilishda qayta tiklash */
+let rateDraftStg = null;
 let bioAvail = false;
 let myChart = null;
 let histOffset = 0;
@@ -425,7 +429,7 @@ function renderAll() {
         incEl.textContent = `+$${fmt(inc / rate)}`;
         expEl.textContent = `-$${fmt(exp / rate)}`;
       } else {
-        txt = `${fmt(bal)} so'm`;
+        txt = `${fmt(bal)} ${t('suffix_uzs')}`;
         incEl.textContent = `+${fmt(inc)}`;
         expEl.textContent = `-${fmt(exp)}`;
       }
@@ -546,23 +550,23 @@ function renderHistory() {
 
     if (empty) empty.style.display = filtered.length === 0 ? 'flex' : 'none';
 
-    list.innerHTML = filtered.map(t => {
-      const isI = t.type === 'income';
-      const dt = new Date(t.ms);
+    list.innerHTML = filtered.map(tx => {
+      const isI = tx.type === 'income';
+      const dt = new Date(tx.ms);
       const dateStr = dt.toLocaleDateString() + ' · ' + dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const chek = (t.receipt || t.receipt_url) ? `<span class="chek-b">📎 Chek</span>` : '';
+      const chek = (tx.receipt || tx.receipt_url) ? `<span class="chek-b">📎 ${t('hist_receipt')}</span>` : '';
       const arrow = isI
         ? `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>`
         : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg>`;
-      return `<div class="txi" onclick="openAction(${t.id})">
+      return `<div class="txi" onclick="openAction(${tx.id})">
       <div class="txi-l">
         <div class="txi-ico ${isI ? 'i' : 'e'}">${arrow}</div>
         <div>
-          <div class="txi-cat">${t.category} ${chek}</div>
+          <div class="txi-cat">${tx.category} ${chek}</div>
           <div class="txi-dt">${dateStr}</div>
         </div>
       </div>
-      <div class="txi-amt ${isI ? 'i' : 'e'}">${isI ? '+' : '-'}${fmt(t.amount)}</div>
+      <div class="txi-amt ${isI ? 'i' : 'e'}">${isI ? '+' : '-'}${fmt(tx.amount)}</div>
     </div>`;
     }).join('');
   } catch (e) {
@@ -971,24 +975,34 @@ async function checkBioAvail() {
   return tg?.BiometricManager?.isBiometricAvailable || false;
 }
 
+function refreshPinIfOpen() {
+  if (!$('pin-screen')?.classList.contains('on')) return;
+  showPin(pinMode);
+}
+
 function showPin(mode) {
   pinMode = mode; pinBuf = '';
   updatePinDots();
   $('pin-screen')?.classList.add('on');
-  const t = $('pin-ttl'), s = $('pin-sub'), c = $('pin-cancel-b'), bio = $('pin-bio-b');
+  const ttl = $('pin-ttl'), sub = $('pin-sub'), c = $('pin-cancel-b'), bio = $('pin-bio-b');
 
   const msgs = {
-    unlock: ['PIN Kod', 'Kirish uchun 4 xonali kod'],
-    setup_new: ['Yangi PIN', '4 raqam kiriting'],
-    setup_confirm: ['Tasdiqlash', 'PIN ni qayta kiriting'],
-    change_old: ['Eski PIN', 'Avvalgi PIN ni kiriting'],
+    unlock: [t('pin_title'), t('pin_enter')],
+    setup_new: [t('pin_new'), t('pin_new_sub')],
+    setup_confirm: [t('pin_confirm'), t('pin_confirm_sub')],
+    change_old: [t('pin_old'), t('pin_old_sub')],
   };
   const [tt, ss] = msgs[mode] || msgs.unlock;
-  if (t) t.textContent = tt;
-  if (s) s.textContent = ss;
-  if (c) c.style.display = mode !== 'unlock' ? 'block' : 'none';
+  if (ttl) ttl.textContent = tt;
+  if (sub) sub.textContent = ss;
+  if (c) {
+    c.style.display = mode !== 'unlock' ? 'block' : 'none';
+    c.textContent = t('pin_cancel');
+  }
   const canBio = tg?.BiometricManager?.isBiometricAvailable && tg?.BiometricManager?.isAccessGranted;
   if (bio) bio.style.display = (mode === 'unlock' && canBio) ? 'flex' : 'none';
+  const bioTxt = $('pin-bio-txt');
+  if (bioTxt) bioTxt.textContent = t('pin_bio_btn');
   if (mode === 'unlock' && tg?.BiometricManager?.isBiometricTokenSaved) setTimeout(triggerBio, 300);
 }
 
@@ -1014,7 +1028,7 @@ function checkPin() {
   };
 
   if (pinMode === 'unlock') {
-    if (pinBuf === pin) $('pin-screen')?.classList.remove('on');
+    if (pinBuf === pin) hidePinScreen();
     else shake();
   } else if (pinMode === 'change_old') {
     if (pinBuf === pin) showPin('setup_new');
@@ -1026,7 +1040,7 @@ function checkPin() {
     if (pinBuf === pinTemp) {
       pin = pinTemp;
       store.set('pin', pin);
-      $('pin-screen')?.classList.remove('on');
+      hidePinScreen();
       updateSettingsUI();
       showErr('PIN o\'rnatildi ✅');
     } else {
@@ -1040,15 +1054,27 @@ async function triggerBio() {
   if (!tg?.BiometricManager?.isBiometricAvailable) return;
   tg.BiometricManager.authenticate({ reason: 'Kassa-ga xavfsiz kirish' }, (success, token) => {
     if (success) {
-      $('pin-screen')?.classList.remove('on');
+      hidePinScreen();
     }
   });
 }
 
-function cancelPin() { $('pin-screen')?.classList.remove('on'); }
+function hidePinScreen() {
+  $('pin-screen')?.classList.remove('on');
+  pinContext = null;
+}
+
+function cancelPin() {
+  $('pin-screen')?.classList.remove('on');
+  if (pinContext === 'settings') {
+    showOv('ov-settings');
+    updateSettingsUI();
+  }
+  pinContext = null;
+}
 
 function setupPin() {
-  closeOv('ov-settings');
+  pinContext = 'settings';
   pin ? showPin('change_old') : showPin('setup_new');
 }
 
@@ -1109,7 +1135,7 @@ function updateSettingsUI() {
 async function saveRate(v) {
   const n = Number(v);
   if (!n || n <= 0) {
-    showErr('Noto\'g\'ri kurs qiymati!');
+    showErr(t('err_rate_invalid'));
     return;
   }
 
@@ -1134,6 +1160,31 @@ async function saveRate(v) {
   } else {
     showErr('Kurs saqlandi (Lokal) ✅');
   }
+}
+
+async function saveRateFromStg() {
+  const raw = $('stg-rate-in')?.value;
+  const n = getCleanAmount(raw);
+  if (!n || n <= 0) {
+    showErr(t('err_rate_invalid'));
+    return;
+  }
+  await saveRate(n);
+  rateDraftStg = fmt(rate);
+  closeOv('stg-sub-rate');
+}
+
+function closeStgRate(saved) {
+  if (!saved) {
+    const rateIn = $('stg-rate-in');
+    if (rateIn && rateDraftStg !== null) rateIn.value = rateDraftStg;
+  }
+  closeOv('stg-sub-rate');
+}
+
+function closeStgRateBackdrop(e) {
+  if (e) { const sh = e.currentTarget?.querySelector('.sheet'); if (sh && sh.contains(e.target)) return; }
+  closeStgRate(false);
 }
 
 function toggleTheme() {
@@ -1259,14 +1310,14 @@ let T = {};
 
 async function loadLang(lang) {
   try {
-    const res = await fetch(`./lang/${lang}.json`);
+    const url = new URL(`lang/${lang}.json`, window.location.href);
+    const res = await fetch(url.toString(), { cache: 'no-store' });
     if (!res.ok) throw new Error('Lang file not found');
     T = await res.json();
     currentLang = lang;
     store.set('lang', lang);
   } catch (e) {
     console.warn('[i18n] Failed to load lang:', lang, e);
-    // fallback silently
   }
 }
 
@@ -1279,16 +1330,29 @@ function applyLang() {
     const key = el.dataset.i18n;
     if (T[key]) el.textContent = T[key];
   });
-  // Update lang checkmarks
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    const key = el.dataset.i18nPlaceholder;
+    if (T[key]) el.placeholder = T[key];
+  });
+  document.querySelectorAll('[data-i18n-title]').forEach(el => {
+    const key = el.dataset.i18nTitle;
+    if (T[key]) el.title = T[key];
+  });
   ['uz', 'ru', 'en'].forEach(l => {
     const check = $(`lang-check-${l}`);
     if (check) check.textContent = l === currentLang ? '✓' : '';
   });
+  document.documentElement.lang = currentLang === 'ru' ? 'ru' : currentLang === 'en' ? 'en' : 'uz';
 }
 
 async function changeLang(lang) {
   await loadLang(lang);
   applyLang();
+  refreshPinIfOpen();
+  renderAll();
+  renderHistory();
+  updateSettingsUI();
+  initSettingsUI();
   closeOv('stg-sub-lang');
   vib('light');
 }
@@ -1303,7 +1367,10 @@ function openStgSub(id) {
   }
   if (id === 'stg-sub-rate') {
     const rateIn = $('stg-rate-in');
-    if (rateIn) rateIn.value = fmt(rate);
+    if (rateIn) {
+      rateDraftStg = fmt(rate);
+      rateIn.value = rateDraftStg;
+    }
   }
   if (id === 'stg-sub-cats') {
     stgCatTab('income');
