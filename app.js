@@ -1310,7 +1310,8 @@ let T = {};
 
 async function loadLang(lang) {
   try {
-    const url = new URL(`lang/${lang}.json`, window.location.href);
+    // Vercel / har qanday hostda doim ildizdan: /lang/uz.json (vercel.json static build)
+    const url = new URL(`/lang/${lang}.json`, window.location.origin);
     const res = await fetch(url.toString(), { cache: 'no-store' });
     if (!res.ok) throw new Error('Lang file not found');
     T = await res.json();
