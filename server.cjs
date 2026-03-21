@@ -43,8 +43,13 @@ const MIME = {
 
 // ── API handler'larni lazy yuklaymiz ─────────────────────────
 function loadApiHandler(name) {
-    try { return require(`./api/${name}`); }
-    catch (e) { return null; }
+    try { 
+        // Try .cjs first as we renamed them
+        return require(`./api/${name}.cjs`); 
+    } catch (e) {
+        try { return require(`./api/${name}`); }
+        catch (e2) { return null; }
+    }
 }
 
 // ── JSON body parser ──────────────────────────────────────────
