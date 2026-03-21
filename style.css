@@ -1370,6 +1370,12 @@ body {
     -webkit-backdrop-filter: blur(8px);
 }
 
+/* Yangi kategoriya modali boshqa overlaylar (masalan stg-sub-cats) ustida bo'lsin */
+#ov-addcat.ov.on,
+#ov-editcat.ov.on {
+    z-index: 85;
+}
+
 .ov.center {
     align-items: center;
     padding: 20px;

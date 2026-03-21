@@ -833,9 +833,10 @@ function buildIconGrid() {
   ICON_NAMES.forEach(name => {
     const d = document.createElement('div');
     d.className = 'io';
+    d.dataset.icon = name;
     d.innerHTML = svgIcon(name);
     d.onclick = () => {
-      document.querySelectorAll('.io').forEach(x => x.classList.remove('on'));
+      grid.querySelectorAll('.io').forEach(x => x.classList.remove('on'));
       d.classList.add('on');
       selIcon = name;
     };
@@ -843,11 +844,30 @@ function buildIconGrid() {
   });
 }
 
-function openAddCat() { $('nc-name').value = ''; selIcon = 'star'; showOv('ov-addcat'); }
+function openAddCat() {
+  $('nc-name').value = '';
+  selIcon = 'star';
+  buildIconGrid();
+  const grid = $('icon-grid');
+  if (grid) {
+    grid.querySelectorAll('.io').forEach(el => {
+      el.classList.toggle('on', el.dataset.icon === 'star');
+    });
+  }
+  showOv('ov-addcat');
+  setTimeout(() => { $('nc-name')?.focus(); }, 100);
+}
 
 async function saveNewCat() {
   const name = $('nc-name')?.value.trim();
-  if (!name || !draft.type) return;
+  if (!name) {
+    showErr(t('err_cat_name_required'));
+    return;
+  }
+  if (!draft.type) {
+    showErr(t('err_cat_type_missing'));
+    return;
+  }
   const payload = { user_id: UID, name, icon: selIcon, type: draft.type };
 
   if (db) {
@@ -859,7 +879,9 @@ async function saveNewCat() {
   }
   cats[draft.type].sort((a, b) => a.name.localeCompare(b.name));
   buildCatGrid(draft.type);
+  if ($('stg-sub-cats')?.classList.contains('on')) renderStgCats();
   closeOv('ov-addcat');
+  vib('light');
 }
 
 let ctxTimer;

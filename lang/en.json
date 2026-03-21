@@ -42,6 +42,8 @@
   "new_cat_name": "Name",
   "new_cat_name_ph": "Category name...",
   "new_cat_icon": "Select icon",
+  "err_cat_name_required": "Enter a category name",
+  "err_cat_type_missing": "Choose income or expense first",
 
   "settings_title": "Settings",
   "stg_profile": "Profile",
