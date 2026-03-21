@@ -1,11 +1,19 @@
 import React, { useState } from 'react';
-import { X, Moon, Sun, Download, Upload, Trash2, Key } from 'lucide-react';
+import { X, Moon, Sun, Download, Upload, Trash2 } from 'lucide-react';
 import { useApp } from '../../store/AppContext';
 import { supabase } from '../../services/supabase';
+import { generatePDF } from '../../utils/reports';
 
 export function SettingsModal({ isOpen, onClose }) {
-  const { exchangeRate, setExchangeRate, pin, setPin, userId, fetchAll } = useApp();
+  const { 
+    exchangeRate, setExchangeRate, 
+    pin, setPin, 
+    userId, fetchAll, 
+    transactions 
+  } = useApp();
+  
   const [localRate, setLocalRate] = useState(exchangeRate);
+  const [theme, setTheme] = useState(localStorage.getItem('kassa_theme') || 'dark');
 
   if (!isOpen) return null;
 
@@ -30,6 +38,50 @@ export function SettingsModal({ isOpen, onClose }) {
     } catch (e) {
       console.error(e);
     }
+  };
+
+  const toggleTheme = () => {
+    const newTheme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(newTheme);
+    localStorage.setItem('kassa_theme', newTheme);
+    document.body.className = newTheme;
+  };
+
+  const handleExport = () => {
+    const data = JSON.stringify(transactions, null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Kassa_Backup_${new Date().getTime()}.json`;
+    a.click();
+  };
+
+  const handleImport = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json';
+    input.onchange = async (e) => {
+      const file = e.target.files[0];
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        try {
+          const data = JSON.parse(event.target.result);
+          if (Array.isArray(data)) {
+            const { error } = await supabase.from('transactions').insert(
+              data.map(t => ({ ...t, id: undefined, user_id: userId }))
+            );
+            if (error) throw error;
+            await fetchAll();
+            alert("Ma'lumotlar muvaffaqiyatli yuklandi!");
+          }
+        } catch (err) {
+          alert("Faylni o'qishda xato!");
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
   };
 
   return (
@@ -66,21 +118,14 @@ export function SettingsModal({ isOpen, onClose }) {
           }}>{pin ? 'Oʻzgartirish' : 'Oʻrnatish'}</button>
         </div>
 
-        {pin && (
-          <div style={{ padding: '4px 0 8px' }}>
-            <button className="pin-rm" onClick={() => {
-              localStorage.removeItem('kassa_pin');
-              setPin(null);
-            }}>— PIN ni oʻchirish</button>
-          </div>
-        )}
-
         <div className="si">
           <div>
             <div className="si-l">Mavzu</div>
-            <div className="si-s">Tungi / Kunduzgi</div>
+            <div className="si-s">{theme === 'dark' ? 'Tungi' : 'Kunduzgi'}</div>
           </div>
-          <button className="si-a"><Moon size={14}/> Almashtirish</button>
+          <button className="si-a" onClick={toggleTheme}>
+            {theme === 'dark' ? <Moon size={14}/> : <Sun size={14}/>} Almashtirish
+          </button>
         </div>
 
         <div style={{ height: '1px', background: 'var(--border)', margin: '16px 0' }}></div>
@@ -89,8 +134,11 @@ export function SettingsModal({ isOpen, onClose }) {
           Ma'lumotlar
         </div>
 
-        <button className="dbtn"><Download size={16}/> JSON Eksport</button>
-        <button className="dbtn"><Upload size={16}/> JSON Import</button>
+        <button className="dbtn" onClick={() => generatePDF(transactions)} style={{ background: 'rgba(168, 85, 247, 0.1)', color: 'var(--accent)' }}>
+          <Download size={16}/> PDF Hisobot (Barchasi)
+        </button>
+        <button className="dbtn" onClick={handleExport}><Download size={16}/> JSON Eksport</button>
+        <button className="dbtn" onClick={handleImport}><Upload size={16}/> JSON Import</button>
         <button className="dbtn red" onClick={handleReset}><Trash2 size={16}/> Barcha ma'lumotlarni o'chirish</button>
         
         <button className="bcl" style={{ marginTop: '16px', width: '100%' }} onClick={onClose}>Yopish</button>

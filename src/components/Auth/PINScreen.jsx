@@ -9,13 +9,15 @@ export function PINScreen({ onUnlock, mode = 'unlock' }) {
 
   const handleKey = (n) => {
     if (pinBuf.length >= 4) return;
-    haptic('medium');
-    const newBuf = pinBuf + n;
+    haptic?.('light');
+    const newBuf = pinBuf + n.toString();
     setPinBuf(newBuf);
     if (newBuf.length === 4) {
       if (newBuf === pin) {
+        haptic?.('success');
         onUnlock();
       } else {
+        haptic?.('error');
         setIsError(true);
         setTimeout(() => {
           setPinBuf('');
@@ -26,6 +28,7 @@ export function PINScreen({ onUnlock, mode = 'unlock' }) {
   };
 
   const handleDelete = () => {
+    haptic?.('light');
     setPinBuf(pinBuf.slice(0, -1));
   };
 

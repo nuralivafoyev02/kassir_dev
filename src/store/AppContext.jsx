@@ -94,6 +94,24 @@ export function AppProvider({ children }) {
     typeFilter,
     setTypeFilter,
     fetchAll,
+    deleteTransaction: async (id) => {
+      try {
+        const { error } = await supabase.from('transactions').delete().eq('id', id);
+        if (error) throw error;
+        setTransactions(prev => prev.filter(t => t.id !== id));
+      } catch (err) {
+        console.error('[AppContext:deleteTransaction]', err);
+      }
+    },
+    updateTransaction: async (id, updates) => {
+      try {
+        const { data, error } = await supabase.from('transactions').update(updates).eq('id', id).select().single();
+        if (error) throw error;
+        setTransactions(prev => prev.map(t => t.id === id ? data : t));
+      } catch (err) {
+        console.error('[AppContext:updateTransaction]', err);
+      }
+    },
     userId,
     tgUser
   };

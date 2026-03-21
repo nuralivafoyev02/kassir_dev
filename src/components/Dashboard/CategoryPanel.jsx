@@ -20,8 +20,8 @@ export function CategoryPanel() {
         {sortedCats.length > 0 ? (
           sortedCats.map(([name, val]) => (
             <div key={name} className="si">
-              <div className="si-l">{name}</div>
-              <div className="si-a" style={{ background: 'none', border: 'none', color: 'var(--text)' }}>
+              <div className="si-l">📁 {name}</div>
+              <div className="si-val" style={{ fontWeight: 800, color: 'var(--text)' }}>
                 {fmt(val)} so'm
               </div>
             </div>
