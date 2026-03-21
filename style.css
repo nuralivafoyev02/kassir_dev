@@ -1449,6 +1449,16 @@ body {
     transform: rotate(90deg);
 }
 
+body.light .sh-close {
+    background: rgba(0, 0, 0, 0.05);
+    color: #64748b;
+}
+
+body.light .sh-close:hover {
+    background: rgba(0, 0, 0, 0.1);
+    color: #0f172a;
+}
+
 .as-b {
     width: 100%;
     display: flex;
@@ -1661,13 +1671,12 @@ body {
 .io:hover {
     background: rgba(255, 255, 255, 0.06);
     border-color: rgba(139, 92, 246, 0.4);
-    transform: translateY(-2px);
 }
 
 .io.on {
-    border-color: var(--accent);
+    border-color: #b356e9cf;
     background: rgba(139, 92, 246, 0.2);
-    box-shadow: 0 0 15px rgba(139, 92, 246, 0.2);
+    box-shadow: 0 0 10px rgba(139, 92, 246, 0.2);
 }
 
 .io:active {
@@ -1683,7 +1692,7 @@ body {
 }
 
 .io.on svg {
-    stroke: #fff;
+    stroke: #b356e9cf;
     filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.5));
 }
 
@@ -2044,8 +2053,9 @@ body.light {
 }
 
 body.light .balance-card {
-    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
     border-color: transparent;
+    box-shadow: 0 10px 30px rgba(99, 102, 241, 0.2);
 }
 
 body.light .bc-amount {
@@ -2054,11 +2064,12 @@ body.light .bc-amount {
 }
 
 body.light #nav {
-    background: rgba(255, 255, 255, 0.95);
+    background: rgba(255, 255, 255, 0.9);
+    border-top: 1px solid rgba(0, 0, 0, 0.05);
 }
 
 body.light .nb {
-    color: #94a3b8;
+    color: #64748b;
 }
 
 body.light .nb.active {
@@ -2066,14 +2077,43 @@ body.light .nb.active {
 }
 
 body.light #pin-screen {
-    background: var(--bg);
+    background: #f8fafc;
     background-image: none;
 }
 
 body.light .header-title {
-    -webkit-text-fill-color: #111827;
+    -webkit-text-fill-color: #0f172a;
     background: none;
 }
+
+body.light .io {
+    background: rgba(0, 0, 0, 0.03);
+    border-color: rgba(0, 0, 0, 0.05);
+}
+
+body.light .io:hover {
+    background: rgba(0, 0, 0, 0.06);
+}
+
+body.light .sh-close {
+    background: rgba(0, 0, 0, 0.05);
+    color: #64748b;
+}
+
+body.light .sh-close:hover {
+    background: rgba(0, 0, 0, 0.1);
+    color: #0f172a;
+}
+
+body.light .sheet {
+    background: #ffffff;
+    border-top: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+body.light .sh-ttl {
+    color: #0f172a;
+}
+
 /* ─── PAGINATION ──────────────────────────────── */
 .load-more-s {
     display: flex;
@@ -2089,6 +2129,17 @@ body.light .header-title {
 }
 
 /* ─── DYNAMIC FONT SIZES ──────────────────────── */
-.bc-amount.sm { font-size: 34px; letter-spacing: -1px; }
-.bc-amount.xs { font-size: 28px; letter-spacing: -0.8px; }
-.bc-amount.xxs { font-size: 22px; letter-spacing: -0.5px; }
+.bc-amount.sm {
+    font-size: 34px;
+    letter-spacing: -1px;
+}
+
+.bc-amount.xs {
+    font-size: 28px;
+    letter-spacing: -0.8px;
+}
+
+.bc-amount.xxs {
+    font-size: 22px;
+    letter-spacing: -0.5px;
+}
