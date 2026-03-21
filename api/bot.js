@@ -1,9 +1,13 @@
-'use strict';
-const TelegramBot = require('node-telegram-bot-api');
-const { createClient } = require('@supabase/supabase-js');
-const fs = require('fs');
-const path = require('path');
-const axios = require('axios');
+import TelegramBot from 'node-telegram-bot-api';
+import { createClient } from '@supabase/supabase-js';
+import fs from 'fs';
+import path from 'path';
+import axios from 'axios';
+import { OpenAI } from 'openai';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // ─── ENV CHECKS ──────────────────────────────────────────
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -23,7 +27,6 @@ const db = createClient(SUPA_URL, SUPA_KEY);
 let openai = null;
 if (OAI_KEY && !OAI_KEY.startsWith('your-')) {
   try {
-    const { OpenAI } = require('openai');
     openai = new OpenAI({ apiKey: OAI_KEY });
   } catch (e) {
     console.warn('[BOT:openai] OpenAI moduli topilmadi:', e.message);
@@ -259,7 +262,7 @@ function buildReport(rows, title) {
 }
 
 // ─── MAIN HANDLER ────────────────────────────────────────
-module.exports = async (req, res) => {
+export default async (req, res) => {
   // Webhook sog'liqi tekshiruvi
   if (req.method !== 'POST') {
     return res.status(200).send('Kassa Bot ishlayapti 🚀');

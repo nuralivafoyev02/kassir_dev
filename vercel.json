@@ -1,11 +1,11 @@
 {
   "version": 2,
   "builds": [
-    { "src": "api/*.cjs", "use": "@vercel/node" },
+    { "src": "api/*.js", "use": "@vercel/node" },
     { "src": "package.json", "use": "@vercel/static-build", "config": { "distDir": "dist" } }
   ],
   "routes": [
-    { "src": "/api/(.*)", "dest": "/api/$1.cjs" },
+    { "src": "/api/(.*)", "dest": "/api/$1.js" },
     { "src": "/assets/(.*)", "dest": "/assets/$1" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]

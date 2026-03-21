@@ -1,15 +1,16 @@
 /**
  * server.js — Express/dotenv talab qilmaydigan dev server
- * Faqat Node.js o'zi bilan ishlaydi.
+ * ESM (ES Modules) talqinida.
  * Ishga tushirish: node server.js
  */
 
-'use strict';
+import http from 'http';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
-const url = require('url');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // ── .env faylni o'qish (dotenv o'rniga) ─────────────────────
 function loadEnv() {
@@ -41,14 +42,14 @@ const MIME = {
     '.ico': 'image/x-icon',
 };
 
-// ── API handler'larni lazy yuklaymiz ─────────────────────────
-function loadApiHandler(name) {
-    try { 
-        // Try .cjs first as we renamed them
-        return require(`./api/${name}.cjs`); 
+// ── API handler'larni lazy yuklaymiz (ESM dynamic import) ────
+async function loadApiHandler(name) {
+    try {
+        const mod = await import(`./api/${name}.js`);
+        return mod.default || mod;
     } catch (e) {
-        try { return require(`./api/${name}`); }
-        catch (e2) { return null; }
+        console.error(`[API:LOAD_ERROR] ${name}:`, e.message);
+        return null;
     }
 }
 
@@ -107,18 +108,18 @@ function serveStatic(filePath, res) {
 
 // ── Asosiy server ─────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
-    const parsed = url.parse(req.url, true);
-    const pathname = parsed.pathname;
+    const urlObj = new URL(req.url, `http://${req.headers.host}`);
+    const pathname = urlObj.pathname;
 
     // /api/config.js
     if (pathname === '/api/config.js') {
-        const handler = loadApiHandler('config');
+        const handler = await loadApiHandler('config');
         if (handler) { const mRes = mockRes(res); req.body = {}; return handler(req, mRes); }
     }
 
     // /api/bot  (POST webhook)
     if (pathname === '/api/bot') {
-        const handler = loadApiHandler('bot');
+        const handler = await loadApiHandler('bot');
         if (handler) {
             req.body = await parseBody(req);
             const mRes = mockRes(res);
@@ -128,7 +129,7 @@ const server = http.createServer(async (req, res) => {
 
     // /api/client-log
     if (pathname === '/api/client-log') {
-        const handler = loadApiHandler('client-log');
+        const handler = await loadApiHandler('client-log');
         if (handler) {
             req.body = req.method === 'POST' ? await parseBody(req) : {};
             const mRes = mockRes(res);
