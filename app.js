@@ -1085,33 +1085,35 @@ function removePin() {
   updateSettingsUI();
 }
 
-function toggleBio() {
-  if (!tg?.BiometricManager?.isBiometricAvailable) {
+function toggleBio(ev) {
+  ev?.stopPropagation?.();
+  const bm = tg?.BiometricManager;
+  if (!bm?.isBiometricAvailable) {
     showErr('Biometrika qurilmangizda mavjud emas');
     return;
   }
 
-  if (tg.BiometricManager.isAccessRequested && !tg.BiometricManager.isAccessGranted) {
-    tg.BiometricManager.openSettings();
+  if (bm.isAccessRequested && !bm.isAccessGranted) {
+    bm.openSettings();
     return;
   }
 
   const tokenLabel = 'kassa-token';
 
-  if (!tg.BiometricManager.isAccessRequested) {
-    tg.BiometricManager.requestAccess({ reason: 'Xavfsizlik uchun biometrikadan foydalanish' }, (granted) => {
-      if (granted) {
-        tg.BiometricManager.updateBiometricToken(tokenLabel, (updated) => {
-          updateSettingsUI();
-        });
-      }
+  const afterTokenUpdate = (updated) => {
+    if (!updated) showErr('Biometrika holati yangilanmadi. Qayta urinib ko‘ring.');
+    else vib('light');
+    updateSettingsUI();
+  };
+
+  if (!bm.isAccessRequested) {
+    bm.requestAccess({ reason: 'Xavfsizlik uchun biometrikadan foydalanish' }, (granted) => {
+      if (!granted) return;
+      bm.updateBiometricToken(tokenLabel, afterTokenUpdate);
     });
   } else {
-    // Access requested and granted
-    const newToken = tg.BiometricManager.isBiometricTokenSaved ? '' : tokenLabel;
-    tg.BiometricManager.updateBiometricToken(newToken, (updated) => {
-      updateSettingsUI();
-    });
+    const newToken = bm.isBiometricTokenSaved ? '' : tokenLabel;
+    bm.updateBiometricToken(newToken, afterTokenUpdate);
   }
 }
 
@@ -1127,6 +1129,17 @@ function updateSettingsUI() {
   if (ri) ri.value = rate ? fmt(rate).replace(/\s/g, ' ') : '';
   if (br) br.style.display = tg?.BiometricManager?.isBiometricAvailable ? 'flex' : 'none';
   if (bt) bt.classList.toggle('on', tg?.BiometricManager?.isBiometricTokenSaved);
+  // Yangi sozlamalar: toggle holati faqat Telegram API (isBiometricTokenSaved) bo'yicha
+  const stgBioTgl = $('stg-bio-tgl');
+  const bm = tg?.BiometricManager;
+  if (bm?.isBiometricAvailable && stgBioTgl) {
+    const saved = !!bm.isBiometricTokenSaved;
+    stgBioTgl.classList.toggle('on', saved);
+    bioOn = saved;
+    store.set('bio', saved ? 'true' : 'false');
+  } else if (stgBioTgl && !bm?.isBiometricAvailable) {
+    stgBioTgl.classList.remove('on');
+  }
   // New settings UI
   updatePinUI();
   updateThemeIcon();
@@ -1414,12 +1427,10 @@ function initSettingsUI() {
   // PIN status
   updatePinUI();
 
-  // Biometric
+  // Biometrik qatori — toggle holati updateSettingsUI / BiometricManager.init da sinxronlanadi
   const canBio = tg?.BiometricManager?.isBiometricAvailable;
   const bioRow = $('stg-bio-row');
   if (bioRow) bioRow.style.display = canBio ? 'flex' : 'none';
-  const bioTgl = $('stg-bio-tgl');
-  if (bioTgl && bioOn) bioTgl.classList.add('on');
 }
 
 function updatePinUI() {
