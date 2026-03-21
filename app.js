@@ -871,9 +871,29 @@ async function saveNewCat() {
   const payload = { user_id: UID, name, icon: selIcon, type: draft.type };
 
   if (db) {
-    const { data, error } = await db.from('categories').insert([payload]).select().single();
-    if (error) { showErr('Kategoriya saqlashda xatolik'); return; }
-    cats[draft.type].push(data);
+    // .single() RLS yoki 0 qator qaytishi bilan PGRST116 beradi; insert bo‘lsa ham xato ko‘rinadi
+    const { data, error } = await db.from('categories').insert([payload]).select();
+    if (error) {
+      console.warn('[saveNewCat]', error);
+      showErr(t('err_cat_save') + (error.message ? ': ' + error.message : ''));
+      return;
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    if (row) {
+      cats[draft.type].push(row);
+    } else {
+      const { data: cd, error: ce } = await db.from('categories').select('*')
+        .eq('user_id', UID).order('name');
+      if (ce) {
+        console.warn('[saveNewCat] refetch', ce);
+        showErr(t('err_cat_save'));
+        return;
+      }
+      if (cd?.length) {
+        cats.income = cd.filter(c => c.type === 'income');
+        cats.expense = cd.filter(c => c.type === 'expense');
+      }
+    }
   } else {
     cats[draft.type].push({ ...payload, id: Date.now() });
   }

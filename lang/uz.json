@@ -44,6 +44,7 @@
   "new_cat_icon": "Ikonka tanlang",
   "err_cat_name_required": "Kategoriya nomini kiriting",
   "err_cat_type_missing": "Avval kirim yoki chiqimni tanlang",
+  "err_cat_save": "Kategoriya saqlashda xatolik",
 
   "settings_title": "Sozlamalar",
   "stg_profile": "Profil",

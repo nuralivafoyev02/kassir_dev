@@ -44,6 +44,7 @@
   "new_cat_icon": "Выберите иконку",
   "err_cat_name_required": "Введите название категории",
   "err_cat_type_missing": "Сначала выберите доход или расход",
+  "err_cat_save": "Не удалось сохранить категорию",
 
   "settings_title": "Настройки",
   "stg_profile": "Профиль",

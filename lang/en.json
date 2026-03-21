@@ -44,6 +44,7 @@
   "new_cat_icon": "Select icon",
   "err_cat_name_required": "Enter a category name",
   "err_cat_type_missing": "Choose income or expense first",
+  "err_cat_save": "Could not save category",
 
   "settings_title": "Settings",
   "stg_profile": "Profile",
