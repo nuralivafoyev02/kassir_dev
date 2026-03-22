@@ -396,96 +396,103 @@ async function fetchUserCategories(userId) {
   return res.data || [];
 }
 
+const CATEGORY_ALIASES = {
+  expense: {
+    Transport: ['taksi', 'taxi', 'yandex', 'metro', 'bus', 'benzin', 'zapravka', "yo'l", 'transport'],
+    Ovqat: ['ovqat', 'osh', 'tushlik', 'kechki ovqat', 'non', 'market', 'korzinka', 'taom', 'kafe', 'fastfood', 'choyxona'],
+    Kvartira: ['ijara', 'kvartira', 'uy', 'kommunal', 'svet', 'gaz', 'suv', 'internet', 'wifi', 'arenda'],
+    Kredit: ['kredit', 'bank', 'tolov', "to'lov", 'uzum', 'nasiya', 'qarz', 'loan'],
+    "Sog'liq": ['dori', 'apteka', 'klinika', 'shifoxona', 'stomatolog', "sog'liq"],
+    Aloqa: ['telefon', 'nomer', 'aloqa', 'sim', 'megabayt', 'internet paket'],
+    "Ko'ngilochar": ['kino', 'oyin', "o'yin", 'game', 'subscription', 'netflix', 'spotify'],
+    Kiyim: ['kiyim', 'shim', 'oyoq kiyim', 'krossovka', 'futbolka', 'kurtka']
+  },
+  income: {
+    Oylik: ['oylik', 'salary', 'maosh'],
+    Avans: ['avans'],
+    Bonus: ['bonus', 'cashback', 'mukofot'],
+    "Sovg'a": ["sovg'a", 'gift'],
+    Sotuv: ['sotuv', 'savdo', 'mijoz', 'zakaz'],
+    Astatka: ['astatka', 'qaytim', 'qoldiq']
+  }
+};
+
 function normalizeTextForMatch(value) {
-  return String(value || '').toLowerCase().replace(/[^a-zа-яё0-9\sЀ-ӿ؀-ۿ']/gi, ' ').replace(/\s+/g, ' ').trim();
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-zа-яё0-9\sЀ-ӿ؀-ۿ']/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function genericCategoryName(value) {
+  const v = normalizeTextForMatch(value);
+  return !v || ['xarajat', 'expense', 'chiqim', 'kirim', 'income', 'daromad'].includes(v);
+}
+
+function scoreCategoryFromAliases(type, haystack) {
+  const aliasPool = CATEGORY_ALIASES[type] || {};
+  let best = null;
+  let bestScore = 0;
+
+  for (const [name, aliases] of Object.entries(aliasPool)) {
+    let score = 0;
+    for (const alias of aliases) {
+      const token = normalizeTextForMatch(alias);
+      if (!token) continue;
+      if (haystack === token) score += 12;
+      else if (haystack.includes(token)) score += Math.max(3, token.length);
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = name;
+    }
+  }
+
+  return { best, bestScore };
 }
 
 function resolveCategoryForUser(parsed, categories, rawText = '') {
-  if (!parsed || !categories?.length) return parsed?.category || null;
-  const type = parsed.type === 'income' ? 'income' : 'expense';
-  const pool = categories.filter(cat => cat.type === type);
-  if (!pool.length) return parsed.category;
+  if (!parsed) return null;
 
+  const type = parsed.type === 'income' ? 'income' : 'expense';
+  const pool = (categories || []).filter(cat => cat.type === type);
   const haystack = `${normalizeTextForMatch(rawText)} ${normalizeTextForMatch(parsed.category)}`.trim();
+
   const direct = pool.find(cat => normalizeTextForMatch(cat.name) === normalizeTextForMatch(parsed.category));
   if (direct) return direct.name;
 
   let best = null;
   let bestScore = 0;
   for (const cat of pool) {
-    const words = [cat.name].concat(Array.isArray(cat.keywords) ? cat.keywords : []).map(normalizeTextForMatch).filter(Boolean);
+    const words = [cat.name]
+      .concat(Array.isArray(cat.keywords) ? cat.keywords : [])
+      .map(normalizeTextForMatch)
+      .filter(Boolean);
+
     let score = 0;
     for (const word of words) {
-      if (!word) continue;
-      if (haystack === word) score += 10;
-      else if (haystack.includes(word)) score += Math.max(2, word.length);
+      if (haystack === word) score += 14;
+      else if (haystack.includes(word)) score += Math.max(3, word.length);
     }
+
     if (score > bestScore) {
       bestScore = score;
       best = cat.name;
     }
   }
 
-  return best || parsed.category;
-}
+  if (best && bestScore >= 4) return best;
 
-async function sendCategoryLimitAlert(userId, chatId, category, amount) {
-  try {
-    const mk = new Date().toISOString().slice(0, 7);
-    const { data, error } = await db
-      .from('category_limits')
-      .select('id, category_name, amount, alert_before, notify_bot, month_key, last_alert_sent_at')
-      .eq('user_id', userId)
-      .eq('category_name', category)
-      .eq('month_key', mk)
-      .eq('is_active', true)
-      .limit(1)
-      .maybeSingle();
-
-    if (error) {
-      const msg = String(error.message || '');
-      if (msg.includes('category_limits') && msg.includes('schema cache')) return;
-      if (msg.includes('does not exist')) return;
-      throw error;
-    }
-    if (!data || !data.notify_bot) return;
-
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
-    const { data: txRows, error: txErr } = await db
-      .from('transactions')
-      .select('amount, category, type, date')
-      .eq('user_id', userId)
-      .eq('type', 'expense')
-      .gte('date', monthStart.toISOString());
-    if (txErr) return;
-
-    const spent = (txRows || []).filter(row => String(row.category || '').replace(/\s*\(\$.*\)\s*$/u, '').trim() === category).reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
-    const remaining = Number(data.amount || 0) - spent;
-    const crossed = remaining <= Number(data.alert_before || 0) || remaining < 0;
-    const alreadySentThisMonth = data.last_alert_sent_at && String(data.last_alert_sent_at).slice(0, 7) === mk;
-    if (!crossed || alreadySentThisMonth) return;
-
-    const alertText = remaining < 0
-      ? `⚠️ <b>Limitdan oshildi</b>
-
-📂 ${esc(category)}
-💸 Limit: <b>${numFmt(data.amount)} so'm</b>
-📉 Sarflandi: <b>${numFmt(spent)} so'm</b>
-🔻 Oshib ketdi: <b>${numFmt(Math.abs(remaining))} so'm</b>`
-      : `🔔 <b>Limitga yaqinlashdingiz</b>
-
-📂 ${esc(category)}
-💸 Limit: <b>${numFmt(data.amount)} so'm</b>
-📉 Sarflandi: <b>${numFmt(spent)} so'm</b>
-💼 Qoldi: <b>${numFmt(remaining)} so'm</b>`;
-
-    await bot.sendMessage(chatId, alertText, { parse_mode: 'HTML' }).catch(() => null);
-    await db.from('category_limits').update({ last_alert_sent_at: new Date().toISOString() }).eq('id', data.id);
-  } catch (error) {
-    logErr('limit-alert', error, { userId, category });
+  const aliasHit = scoreCategoryFromAliases(type, haystack);
+  if (aliasHit.best) {
+    const matchedUserCategory = pool.find(cat => normalizeTextForMatch(cat.name) === normalizeTextForMatch(aliasHit.best));
+    if (matchedUserCategory) return matchedUserCategory.name;
+    return aliasHit.best;
   }
+
+  if (genericCategoryName(parsed.category)) return type === 'income' ? 'Kirim' : 'Xarajat';
+  return parsed.category;
 }
 
 // GPT orkali matndan (ovozli xabardan) ma'lumotlarni olish
@@ -578,8 +585,8 @@ function parseText(raw) {
   if (!Number.isFinite(finalAmount) || finalAmount <= 0) return null;
 
   // Tur aniqlash
-  const incWords = ['kirim', 'tushdi', 'keldi', 'avans', 'oylik', 'bonus', 'oldim', 'daromad'];
-  const expWords = ['chiqim', 'ketdi', 'berdim', 'sarfladim', 'xarajat', 'taksi', 'ovqat', 'tushlik'];
+  const incWords = ['kirim', 'tushdi', 'keldi', 'avans', 'oylik', 'bonus', 'oldim', 'daromad', 'maosh', 'mijoz', 'cashback', 'qaytdi', 'foyda'];
+  const expWords = ['chiqim', 'ketdi', 'berdim', 'sarfladim', 'xarajat', 'taksi', 'ovqat', 'tushlik', 'tolov', "to'lov", 'ijara', 'kommunal', 'kredit', 'dori'];
 
   let type = 'expense';
   if (/^\+/.test(lower)) type = 'income';
@@ -590,6 +597,7 @@ function parseText(raw) {
   else if (/\w+ga\b/i.test(lower)) type = 'expense';
 
   let catPart = clean.replace(m[0], '').replace(/^\s*[+\-]\s*/, '').trim();
+  catPart = catPart.replace(/\b(so'?m|sum|uzs|usd|dollar|kirim|chiqim|berdim|oldim|tushdi|ketdi)\b/gi, ' ').replace(/\s+/g, ' ').trim();
   if (!catPart || catPart.length < 2) catPart = type === 'income' ? 'kirim' : 'xarajat';
 
   const category = catPart.charAt(0).toUpperCase() + catPart.slice(1);

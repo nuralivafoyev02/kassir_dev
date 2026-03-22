@@ -10,6 +10,9 @@
   let featureBooted = false;
   let debtRealtimeBound = false;
   let planRealtimeBound = false;
+  let debtFilterStatus = 'all';
+  let debtFilterDirection = 'all';
+  let planFilterState = 'all';
 
   const debtStoreKey = () => `kassa_debts_${UID}`;
   const planStoreKey = () => `kassa_plans_${UID}`;
@@ -45,6 +48,16 @@
   const monthKey = (value = Date.now()) => {
     const d = new Date(value);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  };
+  const monthLabel = (value) => {
+    if (!value) return '—';
+    try {
+      const [y, m] = String(value).split('-');
+      const d = new Date(Number(y), Number(m) - 1, 1);
+      return d.toLocaleDateString(localeTag(), { month: 'long', year: 'numeric' });
+    } catch {
+      return String(value);
+    }
   };
   const normalizeWords = (value) => {
     if (Array.isArray(value)) {
@@ -324,11 +337,48 @@
       : (currentLang === 'ru' ? 'Kutilmoqda' : currentLang === 'en' ? 'Open' : 'Kutilmoqda');
   }
 
+  function debtDueMeta(item) {
+    const target = item.due_at || item.remind_at || item.created_at;
+    const ts = target ? new Date(target).getTime() : 0;
+    const today = new Date();
+    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+    const end = start + 86400000;
+    return {
+      target,
+      ts,
+      isToday: !!ts && ts >= start && ts < end,
+      isOverdue: item.status === 'open' && !!ts && ts < Date.now(),
+      isUpcoming: item.status === 'open' && !!ts && ts >= Date.now(),
+    };
+  }
+
+  function updateActivePills(prefix, value) {
+    document.querySelectorAll(`[id^="${prefix}"]`).forEach((el) => el.classList.remove('on'));
+    const active = $(`${prefix}${value}`);
+    if (active) active.classList.add('on');
+  }
+
+  window.setDebtFilter = function setDebtFilter(mode = 'all') {
+    debtFilterStatus = mode;
+    updateActivePills('debt-filter-', mode);
+    renderDebts();
+  };
+
+  window.setDebtDirectionFilter = function setDebtDirectionFilter(mode = 'all') {
+    debtFilterDirection = mode;
+    updateActivePills('debt-dir-', mode);
+    renderDebts();
+  };
+
   function renderDebts() {
     const listEl = $('debt-list');
     const emptyEl = $('debt-empty');
     const recEl = $('debt-receivable-total');
     const payEl = $('debt-payable-total');
+    const dueTodayEl = $('debt-due-today-count');
+    const overdueEl = $('debt-overdue-count');
+    const nextDueEl = $('debt-next-due');
+    const metaEl = $('debt-list-meta');
     if (!listEl || !recEl || !payEl) return;
 
     const open = debtList.filter(item => item.status === 'open');
@@ -337,23 +387,50 @@
     recEl.textContent = fmtMoney(receivable);
     payEl.textContent = fmtMoney(payable);
 
-    const items = debtList.slice().sort((a, b) => new Date(a.due_at || a.created_at) - new Date(b.due_at || b.created_at));
+    const metas = debtList.map(item => ({ item, meta: debtDueMeta(item) }));
+    const dueToday = metas.filter(({ meta, item }) => item.status === 'open' && meta.isToday).length;
+    const overdueCount = metas.filter(({ meta }) => meta.isOverdue).length;
+    const nextUpcoming = metas.filter(({ meta, item }) => item.status === 'open' && meta.isUpcoming).sort((a, b) => a.meta.ts - b.meta.ts)[0];
+    if (dueTodayEl) dueTodayEl.textContent = String(dueToday);
+    if (overdueEl) overdueEl.textContent = String(overdueCount);
+    if (nextDueEl) nextDueEl.textContent = nextUpcoming ? `${nextUpcoming.item.person_name} · ${fmtDateTimeShort(nextUpcoming.meta.target)}` : '—';
+
+    let items = debtList.slice();
+    if (debtFilterStatus === 'open') items = items.filter(item => item.status === 'open');
+    else if (debtFilterStatus === 'overdue') items = items.filter(item => debtDueMeta(item).isOverdue);
+    else if (debtFilterStatus === 'paid') items = items.filter(item => item.status === 'paid');
+
+    if (debtFilterDirection !== 'all') items = items.filter(item => item.direction === debtFilterDirection);
+
+    items = items.sort((a, b) => {
+      const aMeta = debtDueMeta(a);
+      const bMeta = debtDueMeta(b);
+      if (a.status !== b.status) return a.status === 'open' ? -1 : 1;
+      if (aMeta.isOverdue !== bMeta.isOverdue) return aMeta.isOverdue ? -1 : 1;
+      return (aMeta.ts || 0) - (bMeta.ts || 0);
+    });
+
+    if (metaEl) metaEl.textContent = `${items.length} yozuv`;
     emptyEl.style.display = items.length ? 'none' : 'grid';
     listEl.innerHTML = items.map(item => {
-      const overdue = item.status === 'open' && item.due_at && new Date(item.due_at).getTime() < Date.now();
+      const due = debtDueMeta(item);
+      const directionClass = item.direction === 'receivable' ? 'good' : 'warn';
+      const statusClass = due.isOverdue ? 'danger' : (item.status === 'paid' ? 'good' : 'warn');
+      const whenLabel = due.target ? fmtDateTimeShort(due.target) : 'Muddat belgilanmagan';
+      const titleMeta = item.note || debtDirectionLabel(item.direction);
       return `
-        <div class="route-item">
+        <div class="route-item debt-route-item ${due.isOverdue ? 'debt-route-item-overdue' : ''}">
           <div class="route-item-top">
             <div>
               <div class="route-item-title">${escapeHtml(item.person_name || '—')}</div>
-              <div class="route-item-sub">${escapeHtml(item.note || debtDirectionLabel(item.direction))}</div>
+              <div class="route-item-sub">${escapeHtml(titleMeta)}</div>
             </div>
             <div class="route-item-amount">${fmtMoney(item.amount)}</div>
           </div>
           <div class="route-badges">
-            <span class="route-badge ${item.direction === 'receivable' ? 'good' : 'warn'}">${debtDirectionLabel(item.direction)}</span>
-            <span class="route-badge ${overdue ? 'danger' : (item.status === 'paid' ? 'good' : 'warn')}">${escapeHtml(debtStatusLabel(item.status))}</span>
-            <span class="route-badge">${escapeHtml(fmtDateTimeShort(item.due_at || item.created_at))}</span>
+            <span class="route-badge ${directionClass}">${debtDirectionLabel(item.direction)}</span>
+            <span class="route-badge ${statusClass}">${due.isOverdue ? "Muddati o'tgan" : escapeHtml(debtStatusLabel(item.status))}</span>
+            <span class="route-badge">${escapeHtml(whenLabel)}</span>
           </div>
           <div class="route-actions">
             ${item.status === 'open' ? `<button class="route-action primary" onclick="markDebtPaid(${item.id})">✅ ${currentLang === 'ru' ? 'Qaytdi' : currentLang === 'en' ? 'Paid back' : 'Qaytdi'}</button>` : ''}
@@ -371,6 +448,7 @@
     $('debt-person').value = debt?.person_name || '';
     $('debt-amount').value = debt?.amount ? fmt(debt.amount) : '';
     $('debt-due-at').value = fmtForInput(debt?.due_at || '');
+    if ($('debt-remind-at')) $('debt-remind-at').value = fmtForInput(debt?.remind_at || debt?.due_at || '');
     $('debt-note').value = debt?.note || '';
     showOv('ov-debt-form');
     setTimeout(() => $('debt-person')?.focus(), 40);
@@ -382,11 +460,12 @@
     const amount = Math.round(getCleanAmount($('debt-amount').value || ''));
     const direction = $('debt-direction').value === 'payable' ? 'payable' : 'receivable';
     const due_at = $('debt-due-at').value ? new Date($('debt-due-at').value).toISOString() : null;
+    const remind_at = $('debt-remind-at')?.value ? new Date($('debt-remind-at').value).toISOString() : (due_at || null);
     const note = String($('debt-note').value || '').trim();
     if (!person_name) return showErr(currentLang === 'ru' ? 'Kim bilan ekanini kiriting' : currentLang === 'en' ? 'Enter the person name' : 'Kim bilan ekanini kiriting');
     if (!amount) return showErr(tt('err_amount_required', 'Summani kiriting'));
 
-    const payload = normalizeDebt({ id: id || Date.now(), user_id: UID, person_name, amount, direction, due_at, remind_at: due_at, note, status: 'open' });
+    const payload = normalizeDebt({ id: id || Date.now(), user_id: UID, person_name, amount, direction, due_at, remind_at, note, status: 'open' });
     if (!db || debtTableAvailable === false) {
       const idx = debtList.findIndex(item => Number(item.id) === Number(payload.id));
       if (idx >= 0) debtList[idx] = payload; else debtList.unshift(payload);
@@ -397,7 +476,7 @@
     }
 
     if (id) {
-      const { data, error } = await db.from('debts').update({ person_name, amount, direction, due_at, remind_at: due_at, note }).eq('id', id).eq('user_id', UID).select().maybeSingle();
+      const { data, error } = await db.from('debts').update({ person_name, amount, direction, due_at, remind_at, note }).eq('id', id).eq('user_id', UID).select().maybeSingle();
       if (error) {
         if (relationMissing(error, 'debts')) { debtTableAvailable = false; return window.saveDebtForm(); }
         return showErr(error.message || 'Debt update failed');
@@ -406,7 +485,7 @@
       const idx = debtList.findIndex(item => Number(item.id) === Number(id));
       if (idx >= 0) debtList[idx] = row;
     } else {
-      const { data, error } = await db.from('debts').insert([{ user_id: UID, person_name, amount, direction, due_at, remind_at: due_at, note }]).select().maybeSingle();
+      const { data, error } = await db.from('debts').insert([{ user_id: UID, person_name, amount, direction, due_at, remind_at, note }]).select().maybeSingle();
       if (error) {
         if (relationMissing(error, 'debts')) { debtTableAvailable = false; return window.saveDebtForm(); }
         return showErr(error.message || 'Debt save failed');
@@ -421,10 +500,11 @@
   window.markDebtPaid = async function markDebtPaid(id) {
     const debt = debtList.find(item => Number(item.id) === Number(id));
     if (!debt) return;
+    const stamp = isoNow();
     debt.status = 'paid';
-    debt.paid_at = isoNow();
+    debt.paid_at = stamp;
     if (!db || debtTableAvailable === false) { persistLocalDebts(); renderDebts(); return; }
-    const { error } = await db.from('debts').update({ status: 'paid', paid_at: isoNow() }).eq('id', id).eq('user_id', UID);
+    const { error } = await db.from('debts').update({ status: 'paid', paid_at: stamp }).eq('id', id).eq('user_id', UID);
     if (error) return showErr(error.message || 'Debt close failed');
     renderDebts();
   };
@@ -463,29 +543,59 @@
     return { spent, remaining, percent, exceeded: spent > plan.amount, near: !spent ? false : remaining <= Number(plan.alert_before || 0) };
   }
 
+  window.setPlanFilter = function setPlanFilter(mode = 'all') {
+    planFilterState = mode;
+    updateActivePills('plan-filter-', mode);
+    renderPlans();
+  };
+
   function renderPlans() {
     const listEl = $('plan-list');
     const emptyEl = $('plan-empty');
+    const activeCountEl = $('plan-active-count');
+    const totalBudgetEl = $('plan-total-budget');
+    const totalRemainingEl = $('plan-total-remaining');
+    const totalSpentEl = $('plan-total-spent');
+    const metaEl = $('plan-list-meta');
     if (!listEl) return;
-    const items = planList.filter(item => item.is_active !== false).slice().sort((a, b) => String(a.category_name || '').localeCompare(String(b.category_name || '')));
+
+    const activePlans = planList.filter(item => item.is_active !== false);
+    const aggregate = activePlans.reduce((acc, plan) => {
+      const stats = getPlanStats(plan);
+      acc.budget += Number(plan.amount || 0);
+      acc.spent += Number(stats.spent || 0);
+      acc.remaining += Number(stats.remaining || 0);
+      return acc;
+    }, { budget: 0, spent: 0, remaining: 0 });
+    if (activeCountEl) activeCountEl.textContent = String(activePlans.length);
+    if (totalBudgetEl) totalBudgetEl.textContent = fmtMoney(aggregate.budget);
+    if (totalRemainingEl) totalRemainingEl.textContent = fmtMoney(aggregate.remaining);
+    if (totalSpentEl) totalSpentEl.textContent = fmtMoney(aggregate.spent);
+
+    let items = activePlans.slice().sort((a, b) => String(a.category_name || '').localeCompare(String(b.category_name || '')));
+    if (planFilterState === 'safe') items = items.filter(plan => { const s = getPlanStats(plan); return !s.near && !s.exceeded; });
+    if (planFilterState === 'near') items = items.filter(plan => getPlanStats(plan).near && !getPlanStats(plan).exceeded);
+    if (planFilterState === 'exceeded') items = items.filter(plan => getPlanStats(plan).exceeded);
+
+    if (metaEl) metaEl.textContent = `${items.length} reja`;
     emptyEl.style.display = items.length ? 'none' : 'grid';
     listEl.innerHTML = items.map(plan => {
       const stats = getPlanStats(plan);
       const statusText = stats.exceeded
         ? (currentLang === 'ru' ? 'Limitdan oshgan' : currentLang === 'en' ? 'Limit exceeded' : 'Limitdan oshgan')
         : stats.near
-          ? (currentLang === 'ru' ? 'Ogohlantirish chegarasi' : currentLang === 'en' ? 'Alert threshold' : 'Ogohlantirish chegarasi')
+          ? (currentLang === 'ru' ? 'Ogohlantirish' : currentLang === 'en' ? 'Alert threshold' : 'Ogohlantirish')
           : (currentLang === 'ru' ? 'Nazorat ostida' : currentLang === 'en' ? 'On track' : 'Nazorat ostida');
       return `
-        <div class="route-item">
+        <div class="route-item plan-route-item ${stats.exceeded ? 'plan-route-item-danger' : ''}">
           <div class="route-item-top">
             <div>
               <div class="route-item-title">${escapeHtml(plan.category_name || '—')}</div>
-              <div class="route-item-sub">${escapeHtml(plan.month_key || monthKey())}</div>
+              <div class="route-item-sub">${escapeHtml(monthLabel(plan.month_key || monthKey()))}</div>
             </div>
             <div class="route-item-amount">${fmtMoney(plan.amount)}</div>
           </div>
-          <div class="plan-progress"><span style="width:${Math.min(100, getPlanStats(plan).percent)}%"></span></div>
+          <div class="plan-progress"><span style="width:${Math.min(100, stats.percent)}%"></span></div>
           <div class="plan-stats">
             <div class="plan-stat"><span class="plan-stat-label">Sarflandi</span><span class="plan-stat-value">${fmtMoney(stats.spent)}</span></div>
             <div class="plan-stat"><span class="plan-stat-label">Qoldi</span><span class="plan-stat-value">${fmtMoney(stats.remaining)}</span></div>
@@ -495,6 +605,7 @@
             <span class="route-badge ${stats.exceeded ? 'danger' : (stats.near ? 'warn' : 'good')}">${escapeHtml(statusText)}</span>
             <span class="route-badge">Alert: ${fmtMoney(plan.alert_before)}</span>
             ${plan.notify_bot ? `<span class="route-badge">Bot</span>` : ''}
+            ${plan.notify_app ? `<span class="route-badge good">App</span>` : ''}
           </div>
           <div class="route-actions">
             <button class="route-action" onclick="openPlanForm(${plan.id})">✏️ ${currentLang === 'ru' ? 'Изменить' : currentLang === 'en' ? 'Edit' : 'Tahrirlash'}</button>
@@ -514,9 +625,11 @@
       sel.value = match ? String(match.id || '') : (sel.options[0]?.value || '');
     }
     $('plan-amount').value = plan?.amount ? fmt(plan.amount) : '';
+    $('plan-month-key').value = plan?.month_key || monthKey();
     $('plan-alert-before').value = plan?.alert_before ? fmt(plan.alert_before) : '';
     $('plan-notify-bot').checked = plan?.notify_bot !== false;
     $('plan-notify-app').checked = plan?.notify_app !== false;
+    if ($('plan-is-active')) $('plan-is-active').checked = plan?.is_active !== false;
     showOv('ov-plan-form');
   };
 
@@ -529,11 +642,12 @@
     const alert_before = Math.round(getCleanAmount($('plan-alert-before').value || ''));
     const notify_bot = !!$('plan-notify-bot').checked;
     const notify_app = !!$('plan-notify-app').checked;
-    const mk = monthKey();
+    const is_active = $('plan-is-active') ? !!$('plan-is-active').checked : true;
+    const mk = $('plan-month-key')?.value || monthKey();
     if (!category_name) return showErr(currentLang === 'ru' ? 'Kategoriyani tanlang' : currentLang === 'en' ? 'Choose a category' : 'Kategoriyani tanlang');
     if (!amount) return showErr(tt('err_amount_required', 'Summani kiriting'));
 
-    const payload = normalizePlan({ id: id || Date.now(), user_id: UID, category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, month_key: mk, is_active: true });
+    const payload = normalizePlan({ id: id || Date.now(), user_id: UID, category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, month_key: mk, is_active });
     if (!db || planTableAvailable === false) {
       const idx = planList.findIndex(item => Number(item.id) === Number(payload.id));
       if (idx >= 0) planList[idx] = payload; else planList.unshift(payload);
@@ -544,7 +658,7 @@
     }
 
     if (id) {
-      const { data, error } = await db.from('category_limits').update({ category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, month_key: mk, is_active: true }).eq('id', id).eq('user_id', UID).select().maybeSingle();
+      const { data, error } = await db.from('category_limits').update({ category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, month_key: mk, is_active }).eq('id', id).eq('user_id', UID).select().maybeSingle();
       if (error) {
         if (relationMissing(error, 'category_limits')) { planTableAvailable = false; return window.savePlanForm(); }
         return showErr(error.message || 'Plan update failed');
@@ -552,7 +666,7 @@
       const idx = planList.findIndex(item => Number(item.id) === Number(id));
       if (idx >= 0) planList[idx] = normalizePlan(data || payload);
     } else {
-      const { data, error } = await db.from('category_limits').insert([{ user_id: UID, category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, month_key: mk, is_active: true }]).select().maybeSingle();
+      const { data, error } = await db.from('category_limits').insert([{ user_id: UID, category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, month_key: mk, is_active }]).select().maybeSingle();
       if (error) {
         if (relationMissing(error, 'category_limits')) { planTableAvailable = false; return window.savePlanForm(); }
         return showErr(error.message || 'Plan save failed');
@@ -657,6 +771,9 @@
     applyLang = function applyLangEnhanced() {
       originalApplyLang();
       syncSettingsCategoryEntry();
+      updateActivePills('debt-filter-', debtFilterStatus);
+      updateActivePills('debt-dir-', debtFilterDirection);
+      updateActivePills('plan-filter-', planFilterState);
       renderDebts();
       renderPlans();
       renderStgCatsEnhanced();
@@ -679,6 +796,9 @@
       console.warn('[features] data bootstrap failed', error);
     }
     populatePlanCategoryOptions();
+    updateActivePills('debt-filter-', debtFilterStatus);
+    updateActivePills('debt-dir-', debtFilterDirection);
+    updateActivePills('plan-filter-', planFilterState);
     renderDebts();
     renderPlans();
     renderStgCatsEnhanced();

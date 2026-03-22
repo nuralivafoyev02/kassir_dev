@@ -41,9 +41,10 @@ module.exports = async (req, res) => {
     for (const debt of data || []) {
       const direction = debt.direction === 'payable' ? 'Siz berishingiz kerak' : 'Sizga qaytishi kerak';
       const when = debt.due_at ? new Date(debt.due_at).toLocaleString('uz-UZ') : 'belgilangan vaqt';
+      const today = debt.due_at ? new Date(debt.due_at).toLocaleDateString('uz-UZ') === new Date().toLocaleDateString('uz-UZ') : false;
       const text = `⏰ <b>Qarz eslatmasi</b>
 
-👤 ${debt.person_name}
+${today ? 'Bugun' : 'Eslatma'} <b>${debt.person_name}</b> bilan bog'liq qarz muddati yetdi.
 💰 ${Number(debt.amount || 0).toLocaleString('ru-RU')} so'm
 📌 ${direction}
 🕒 ${when}${debt.note ? `

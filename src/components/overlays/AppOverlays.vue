@@ -65,26 +65,33 @@
     </div>
   </div>
   <div class="ov center" id="ov-debt-form" onclick="closeOv('ov-debt-form',event)">
-    <div class="sheet c debt-modal" onclick="event.stopPropagation()">
+    <div class="sheet c debt-modal debt-modal-v12" onclick="event.stopPropagation()">
       <div class="sh-ttl">🤝 <span>Qarz</span></div>
       <input id="debt-id" type="hidden">
       <div class="fld"><label>Yo'nalish</label><select id="debt-direction"><option value="receivable">Sizga berishadi</option><option value="payable">Siz berasiz</option></select></div>
       <div class="fld"><label>Kim bilan</label><input id="debt-person" type="text" placeholder="Ism yoki kontakt"></div>
-      <div class="fld"><label>Summa</label><input id="debt-amount" type="text" inputmode="decimal" placeholder="100 000"></div>
-      <div class="fld"><label>Qaytarish vaqti</label><input id="debt-due-at" type="datetime-local"></div>
+      <div class="fld two-col-grid">
+        <div><label>Summa</label><input id="debt-amount" type="text" inputmode="decimal" placeholder="100 000"></div>
+        <div><label>Qaytarish vaqti</label><input id="debt-due-at" type="datetime-local"></div>
+      </div>
+      <div class="fld"><label>Eslatma vaqti</label><input id="debt-remind-at" type="datetime-local"></div>
+      <div class="fld debt-hint">Agar eslatma vaqti bo'sh qolsa, bot qaytarish vaqti kelganda xabar yuboradi.</div>
       <div class="fld"><label>Izoh</label><textarea id="debt-note" rows="3" placeholder="Qisqa eslatma"></textarea></div>
       <div class="mrow"><button class="bcl" onclick="closeOv('ov-debt-form')">Bekor</button><button class="bpri" onclick="saveDebtForm()">Saqlash</button></div>
     </div>
   </div>
 
   <div class="ov" id="ov-plan-form" onclick="closeOv('ov-plan-form',event)">
-    <div class="sheet" onclick="event.stopPropagation()">
+    <div class="sheet plan-modal-v12" onclick="event.stopPropagation()">
       <div class="sh-hdl"></div>
       <button class="sh-close" onclick="closeOv('ov-plan-form')">✕</button>
       <div class="sh-ttl">🎯 <span>Reja</span></div>
       <input id="plan-id" type="hidden">
       <div class="fld"><label>Kategoriya</label><select id="plan-category"></select></div>
-      <div class="fld"><label>Oy limiti</label><input id="plan-amount" type="text" inputmode="decimal" placeholder="1 500 000"></div>
+      <div class="fld two-col-grid">
+        <div><label>Oy limiti</label><input id="plan-amount" type="text" inputmode="decimal" placeholder="1 500 000"></div>
+        <div><label>Oy</label><input id="plan-month-key" type="month"></div>
+      </div>
       <div class="fld"><label>Ogohlantirish chegarasi</label><input id="plan-alert-before" type="text" inputmode="decimal" placeholder="200 000"></div>
       <label class="stg-toggle" style="margin-top:12px">
         <input id="plan-notify-bot" type="checkbox" checked>
@@ -93,6 +100,10 @@
       <label class="stg-toggle" style="margin-top:10px">
         <input id="plan-notify-app" type="checkbox" checked>
         <span>Mini app ichida ogohlantirish chiqsin</span>
+      </label>
+      <label class="stg-toggle" style="margin-top:10px">
+        <input id="plan-is-active" type="checkbox" checked>
+        <span>Reja faol bo'lsin</span>
       </label>
       <div class="mrow" style="margin-top:16px"><button class="bcl" onclick="closeOv('ov-plan-form')">Bekor</button><button class="bpri" onclick="savePlanForm()">Saqlash</button></div>
     </div>
@@ -166,7 +177,7 @@
           </svg>
         </div>
         <div class="stg-name" id="stg-user-name">—</div>
-        <div class="stg-sub-info" id="stg-sub-info" data-i18n="stg_coming_soon">Tez orada</div>
+        <div class="stg-sub-info" id="stg-sub-info" data-i18n="stg_coming_soon">Tez kunda</div>
       </div>
 
       <!-- GURUH: PROFIL -->
