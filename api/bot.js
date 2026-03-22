@@ -387,6 +387,107 @@ function buildBroadcastResultMarkup(bc, result) {
   return { inline_keyboard: rows };
 }
 
+async function fetchUserCategories(userId) {
+  let res = await db.from('categories').select('name, type, keywords').eq('user_id', userId);
+  if (res.error && isMissingColumnError(res.error, 'keywords')) {
+    res = await db.from('categories').select('name, type').eq('user_id', userId);
+  }
+  if (res.error) throw res.error;
+  return res.data || [];
+}
+
+function normalizeTextForMatch(value) {
+  return String(value || '').toLowerCase().replace(/[^a-zа-яё0-9\sЀ-ӿ؀-ۿ']/gi, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function resolveCategoryForUser(parsed, categories, rawText = '') {
+  if (!parsed || !categories?.length) return parsed?.category || null;
+  const type = parsed.type === 'income' ? 'income' : 'expense';
+  const pool = categories.filter(cat => cat.type === type);
+  if (!pool.length) return parsed.category;
+
+  const haystack = `${normalizeTextForMatch(rawText)} ${normalizeTextForMatch(parsed.category)}`.trim();
+  const direct = pool.find(cat => normalizeTextForMatch(cat.name) === normalizeTextForMatch(parsed.category));
+  if (direct) return direct.name;
+
+  let best = null;
+  let bestScore = 0;
+  for (const cat of pool) {
+    const words = [cat.name].concat(Array.isArray(cat.keywords) ? cat.keywords : []).map(normalizeTextForMatch).filter(Boolean);
+    let score = 0;
+    for (const word of words) {
+      if (!word) continue;
+      if (haystack === word) score += 10;
+      else if (haystack.includes(word)) score += Math.max(2, word.length);
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = cat.name;
+    }
+  }
+
+  return best || parsed.category;
+}
+
+async function sendCategoryLimitAlert(userId, chatId, category, amount) {
+  try {
+    const mk = new Date().toISOString().slice(0, 7);
+    const { data, error } = await db
+      .from('category_limits')
+      .select('id, category_name, amount, alert_before, notify_bot, month_key, last_alert_sent_at')
+      .eq('user_id', userId)
+      .eq('category_name', category)
+      .eq('month_key', mk)
+      .eq('is_active', true)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      const msg = String(error.message || '');
+      if (msg.includes('category_limits') && msg.includes('schema cache')) return;
+      if (msg.includes('does not exist')) return;
+      throw error;
+    }
+    if (!data || !data.notify_bot) return;
+
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+    const { data: txRows, error: txErr } = await db
+      .from('transactions')
+      .select('amount, category, type, date')
+      .eq('user_id', userId)
+      .eq('type', 'expense')
+      .gte('date', monthStart.toISOString());
+    if (txErr) return;
+
+    const spent = (txRows || []).filter(row => String(row.category || '').replace(/\s*\(\$.*\)\s*$/u, '').trim() === category).reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+    const remaining = Number(data.amount || 0) - spent;
+    const crossed = remaining <= Number(data.alert_before || 0) || remaining < 0;
+    const alreadySentThisMonth = data.last_alert_sent_at && String(data.last_alert_sent_at).slice(0, 7) === mk;
+    if (!crossed || alreadySentThisMonth) return;
+
+    const alertText = remaining < 0
+      ? `⚠️ <b>Limitdan oshildi</b>
+
+📂 ${esc(category)}
+💸 Limit: <b>${numFmt(data.amount)} so'm</b>
+📉 Sarflandi: <b>${numFmt(spent)} so'm</b>
+🔻 Oshib ketdi: <b>${numFmt(Math.abs(remaining))} so'm</b>`
+      : `🔔 <b>Limitga yaqinlashdingiz</b>
+
+📂 ${esc(category)}
+💸 Limit: <b>${numFmt(data.amount)} so'm</b>
+📉 Sarflandi: <b>${numFmt(spent)} so'm</b>
+💼 Qoldi: <b>${numFmt(remaining)} so'm</b>`;
+
+    await bot.sendMessage(chatId, alertText, { parse_mode: 'HTML' }).catch(() => null);
+    await db.from('category_limits').update({ last_alert_sent_at: new Date().toISOString() }).eq('id', data.id);
+  } catch (error) {
+    logErr('limit-alert', error, { userId, category });
+  }
+}
+
 // GPT orkali matndan (ovozli xabardan) ma'lumotlarni olish
 async function gptParse(text) {
   if (!openai || !text) return null;
@@ -497,11 +598,18 @@ function parseText(raw) {
 }
 
 // ─── SAVE TRANSACTION ────────────────────────────────────
-async function saveTx(userId, chatId, parsed, receiptUrl = null, exRate = DEFAULT_RATE, replyId = null) {
+async function saveTx(userId, chatId, parsed, receiptUrl = null, exRate = DEFAULT_RATE, replyId = null, rawText = '') {
   const safeRate = Number(exRate) > 0 ? Number(exRate) : DEFAULT_RATE;
 
   let amount = parsed.amount;
   let category = parsed.category;
+
+  try {
+    const userCats = await fetchUserCategories(userId);
+    category = resolveCategoryForUser(parsed, userCats, rawText) || category;
+  } catch (error) {
+    logErr('category-resolve', error, { userId });
+  }
   let amtTxt = `${numFmt(amount)} so'm`;
 
   if (parsed.isUSD) {
@@ -548,7 +656,8 @@ async function saveTx(userId, chatId, parsed, receiptUrl = null, exRate = DEFAUL
     opts
   ).catch(() => { });
 
-  log('tx-saved', { userId, id: saved.id, type: saved.type, amount: saved.amount });
+  await sendCategoryLimitAlert(userId, chatId, category, amount);
+  log('tx-saved', { userId, id: saved.id, type: saved.type, amount: saved.amount, category });
   return saved;
 }
 
@@ -1095,7 +1204,7 @@ module.exports = async (req, res) => {
 
         if (proc) await bot.deleteMessage(chatId, proc.message_id).catch(() => { });
 
-        await saveTx(userId, chatId, parsed, null, user.exchange_rate, msg.message_id);
+        await saveTx(userId, chatId, parsed, null, user.exchange_rate, msg.message_id, spoken);
 
       } catch (e) {
         logErr('voice', e, { userId });
@@ -1147,7 +1256,7 @@ module.exports = async (req, res) => {
         }
       }
 
-      await saveTx(userId, chatId, parsed, receiptUrl, user.exchange_rate, msg.message_id);
+      await saveTx(userId, chatId, parsed, receiptUrl, user.exchange_rate, msg.message_id, text);
       return res.status(200).json({ ok: true });
     }
 

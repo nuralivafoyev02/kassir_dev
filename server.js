@@ -108,6 +108,15 @@ async function start() {
         }
       }
 
+      if (pathname === '/api/cron-reminders') {
+        const handler = loadApiHandler('cron-reminders');
+        if (handler) {
+          req.body = req.method === 'POST' ? await parseBody(req) : {};
+          const mRes = mockRes(res);
+          return handler(req, mRes);
+        }
+      }
+
       vite.middlewares(req, res, async () => {
         try {
           let template = fs.readFileSync(path.resolve(__dirname, 'index.html'), 'utf8');
