@@ -111,6 +111,124 @@ function isMissingColumnError(error, column) {
   return msg.includes(`'${column}'`) && msg.includes('schema cache');
 }
 
+
+function isMissingTableError(error, table) {
+  const msg = String(error?.message || error?.details || '');
+  return msg.includes(`relation "${table}" does not exist`) || msg.includes(`Could not find the table '${table}'`) || msg.includes(`relation '${table}' does not exist`);
+}
+
+function monthKeyOf(value = Date.now()) {
+  const d = new Date(value);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  return `${y}-${m}`;
+}
+
+function monthStartIso(value = Date.now()) {
+  const d = new Date(value);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0, 0)).toISOString();
+}
+
+function startOfTodayIso(value = Date.now()) {
+  const d = new Date(value);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0)).toISOString();
+}
+
+async function sendCategoryLimitAlert(userId, chatId, category, latestAmount, txType = 'expense') {
+  if (txType !== 'expense') return;
+  if (!userId || !chatId || !category) return;
+
+  try {
+    const now = Date.now();
+    const currentMonth = monthKeyOf(now);
+    let limitRes = await db
+      .from('category_limits')
+      .select('id, category_name, amount, alert_before, notify_bot, is_active, last_alert_sent_at, month_key')
+      .eq('user_id', userId)
+      .eq('month_key', currentMonth)
+      .eq('is_active', true)
+      .ilike('category_name', category)
+      .limit(1)
+      .maybeSingle();
+
+    if (limitRes.error && isMissingColumnError(limitRes.error, 'month_key')) {
+      limitRes = await db
+        .from('category_limits')
+        .select('id, category_name, amount, alert_before, notify_bot, is_active, last_alert_sent_at')
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .ilike('category_name', category)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+    }
+
+    if (limitRes.error) {
+      if (isMissingTableError(limitRes.error, 'category_limits')) return;
+      logErr('limit-fetch', limitRes.error, { userId, category });
+      return;
+    }
+
+    const limit = limitRes.data;
+    if (!limit || !limit.notify_bot || !limit.is_active) return;
+
+    const spentRes = await db
+      .from('transactions')
+      .select('amount, date')
+      .eq('user_id', userId)
+      .eq('type', 'expense')
+      .eq('category', category)
+      .gte('date', monthStartIso(now));
+
+    if (spentRes.error) {
+      logErr('limit-spent', spentRes.error, { userId, category });
+      return;
+    }
+
+    const spent = (spentRes.data || []).reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+    const limitAmount = Number(limit.amount || 0);
+    const alertBefore = Math.max(0, Number(limit.alert_before || 0));
+    const remaining = limitAmount - spent;
+    const exceeded = spent > limitAmount;
+    const inWarningZone = !exceeded && alertBefore > 0 && remaining <= alertBefore;
+
+    if (!exceeded && !inWarningZone) return;
+
+    const lastAlertTs = limit.last_alert_sent_at ? new Date(limit.last_alert_sent_at).getTime() : 0;
+    const cooldownMs = 6 * 60 * 60 * 1000;
+    if (lastAlertTs && now - lastAlertTs < cooldownMs) return;
+
+    const latestTxt = Number(latestAmount || 0) > 0 ? `
+🧾 Oxirgi yozuv: <b>${numFmt(latestAmount)} so'm</b>` : '';
+    const text = exceeded
+      ? `🚨 <b>Limit oshdi</b>
+
+📂 Kategoriya: <b>${esc(category)}</b>
+🎯 Limit: <b>${numFmt(limitAmount)} so'm</b>
+📤 Sarflangan: <b>${numFmt(spent)} so'm</b>
+📉 Oshgan summa: <b>${numFmt(Math.abs(remaining))} so'm</b>${latestTxt}`
+      : `⚠️ <b>Limitga yaqinlashdingiz</b>
+
+📂 Kategoriya: <b>${esc(category)}</b>
+🎯 Limit: <b>${numFmt(limitAmount)} so'm</b>
+📤 Sarflangan: <b>${numFmt(spent)} so'm</b>
+💡 Qolgan: <b>${numFmt(Math.max(0, remaining))} so'm</b>${latestTxt}`;
+
+    await bot.sendMessage(chatId, text, { parse_mode: 'HTML' }).catch(() => null);
+
+    const updRes = await db
+      .from('category_limits')
+      .update({ last_alert_sent_at: new Date(now).toISOString() })
+      .eq('id', limit.id);
+
+    if (updRes.error && !isMissingColumnError(updRes.error, 'last_alert_sent_at')) {
+      logErr('limit-update', updRes.error, { userId, category, limitId: limit.id });
+    }
+  } catch (error) {
+    logErr('limit-alert', error, { userId, category });
+  }
+}
+
 async function insertTransactions(rows, source = 'bot') {
   const payload = (rows || []).map(row => ({ ...row }));
 
@@ -664,7 +782,7 @@ async function saveTx(userId, chatId, parsed, receiptUrl = null, exRate = DEFAUL
     opts
   ).catch(() => { });
 
-  await sendCategoryLimitAlert(userId, chatId, category, amount);
+  await sendCategoryLimitAlert(userId, chatId, category, amount, parsed.type);
   log('tx-saved', { userId, id: saved.id, type: saved.type, amount: saved.amount, category });
   return saved;
 }
@@ -1046,12 +1164,12 @@ module.exports = async (req, res) => {
     // ── Yangi foydalanuvchi — telefon so'rash ──
     if (!user) {
       await bot.sendMessage(chatId, `👋 Assalomu alaykum!\nBotdan foydalanish uchun telefon raqamingizni tasdiqlang.`, {
-          reply_markup: {
-            keyboard: [[{ text: '📱 Telefon raqamni yuborish', request_contact: true }]],
-            resize_keyboard: true,
-            one_time_keyboard: true,
-          },
-        }
+        reply_markup: {
+          keyboard: [[{ text: '📱 Telefon raqamni yuborish', request_contact: true }]],
+          resize_keyboard: true,
+          one_time_keyboard: true,
+        },
+      }
       ).catch(() => { });
       return res.status(200).json({ ok: true });
     }
