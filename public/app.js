@@ -16,6 +16,28 @@ const tgVersionAtLeast = (min) => {
   return true;
 };
 
+const syncViewportMetrics = () => {
+  const vv = window.visualViewport;
+  const viewportHeight = Number(tg?.viewportHeight || 0);
+  const stableHeight = Number(tg?.viewportStableHeight || viewportHeight || 0);
+  const headerOffset = (viewportHeight - stableHeight) > 0
+    ? (viewportHeight - stableHeight)
+    : 0;
+  const vvTop = Math.max(0, Number(vv?.offsetTop || 0));
+  const vvHeight = Math.max(0, Number(vv?.height || 0));
+  const winHeight = Math.max(window.innerHeight || 0, document.documentElement.clientHeight || 0);
+  const rawBottomGap = Math.max(0, winHeight - vvHeight - vvTop);
+  const bottomGap = rawBottomGap > 120 ? 0 : rawBottomGap;
+  const appHeight = Math.max(0, stableHeight || vvHeight || winHeight || 0);
+
+  document.documentElement.style.setProperty('--tg-header-offset', headerOffset + 'px');
+  document.documentElement.style.setProperty('--vv-top', vvTop + 'px');
+  document.documentElement.style.setProperty('--vv-bottom', bottomGap + 'px');
+  if (appHeight) {
+    document.documentElement.style.setProperty('--app-height', appHeight + 'px');
+  }
+};
+
 if (tg) {
   tg.expand?.();
   tg.ready?.();
@@ -26,19 +48,14 @@ if (tg) {
     tg.setBackgroundColor?.('#050508');
   }
 
-  // Viewport o'zgarganda xavfsiz masofani qayta hisoblash
-  const updateSafeArea = () => {
-    const viewportHeight = Number(tg.viewportHeight || 0);
-    const stableHeight = Number(tg.viewportStableHeight || viewportHeight || 0);
-    const offset = (viewportHeight - stableHeight) > 0
-      ? (viewportHeight - stableHeight)
-      : 0;
-    document.documentElement.style.setProperty('--tg-header-offset', offset + 'px');
-  };
-
-  tg.onEvent?.('viewportChanged', updateSafeArea);
-  updateSafeArea();
+  tg.onEvent?.('viewportChanged', syncViewportMetrics);
 }
+
+window.addEventListener('resize', syncViewportMetrics, { passive: true });
+window.addEventListener('orientationchange', syncViewportMetrics, { passive: true });
+window.visualViewport?.addEventListener?.('resize', syncViewportMetrics, { passive: true });
+window.visualViewport?.addEventListener?.('scroll', syncViewportMetrics, { passive: true });
+syncViewportMetrics();
 
 // ─── STORAGE ────────────────────────────────────────────
 const store = {
