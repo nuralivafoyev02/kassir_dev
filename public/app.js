@@ -1464,6 +1464,7 @@ async function submitFlow() {
     const saved = Array.isArray(data) ? data[0] : data;
     const i = txList.findIndex(t => t.id === tempId);
     if (i !== -1 && saved) txList[i] = normTx({ ...txList[i], ...saved, receipt: localReceipt });
+    if (saved) await notifyMiniAppTxSaved({ ...saved, receipt: localReceipt, source: 'mini_app' });
   }
 }
 
@@ -1957,6 +1958,22 @@ function getExportFileName() {
   return `Kassa_${from}_${to}.pdf`;
 }
 
+function getExportExcelFileName() {
+  return getExportFileName().replace(/\.pdf$/i, '.xls');
+}
+
+function getExportDataset() {
+  const { sStr, eStr, start, end } = getExportRange();
+  const data = txList
+    .filter(t => t.ms >= start && t.ms <= end)
+    .sort((a, b) => a.ms - b.ms);
+  const income = data.filter(t => t.type === 'income').reduce((sum, row) => sum + row.amount, 0);
+  const expense = data.filter(t => t.type === 'expense').reduce((sum, row) => sum + row.amount, 0);
+  const receipts = data.filter(t => t.receipt || t.receipt_url).length;
+  const balance = income - expense;
+  return { sStr, eStr, start, end, data, income, expense, receipts, balance };
+}
+
 function setExportPreset(preset) {
   const now = new Date();
   let from = new Date(now);
@@ -1997,11 +2014,7 @@ function openExport() {
 }
 
 function updateExportPreview() {
-  const { sStr, eStr, start, end } = getExportRange();
-  const data = txList.filter(t => t.ms >= start && t.ms <= end);
-  const inc = data.filter(t => t.type === 'income').reduce((sum, row) => sum + row.amount, 0);
-  const exp = data.filter(t => t.type === 'expense').reduce((sum, row) => sum + row.amount, 0);
-  const receipts = data.filter(t => t.receipt || t.receipt_url).length;
+  const { sStr, eStr, data, income, expense, receipts, balance } = getExportDataset();
 
   const cntEl = $('ex-cnt');
   const recEl = $('ex-rec');
@@ -2013,40 +2026,95 @@ function updateExportPreview() {
 
   if (cntEl) cntEl.textContent = String(data.length);
   if (recEl) recEl.textContent = String(receipts);
-  if (incEl) incEl.textContent = `+${fmt(inc)} ${tt('suffix_uzs', "so'm")}`;
-  if (expEl) expEl.textContent = `-${fmt(exp)} ${tt('suffix_uzs', "so'm")}`;
-  if (balEl) balEl.textContent = `${fmt(inc - exp)} ${tt('suffix_uzs', "so'm")}`;
-  if (fileEl) fileEl.textContent = getExportFileName();
+  if (incEl) incEl.textContent = `+${fmt(income)} ${tt('suffix_uzs', "so'm")}`;
+  if (expEl) expEl.textContent = `-${fmt(expense)} ${tt('suffix_uzs', "so'm")}`;
+  if (balEl) balEl.textContent = `${fmt(balance)} ${tt('suffix_uzs', "so'm")}`;
+  if (fileEl) fileEl.textContent = `${getExportFileName()} + ${getExportExcelFileName()}`;
   if (periodEl) periodEl.textContent = sStr && eStr ? `${sStr.replaceAll('-', '.')} — ${eStr.replaceAll('-', '.')}` : '—';
 }
 
-async function sendPdfToBot(blob, fileName, caption) {
-  const reader = new FileReader();
-  const base64 = await new Promise((resolve, reject) => {
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-
-  const resp = await fetch('/api/send-report-pdf', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      user_id: UID,
-      file_name: fileName,
-      caption,
-      base64,
-    })
-  });
-
-  let payload = {};
-  try { payload = await resp.json(); } catch { }
-  if (!resp.ok || payload?.ok === false) {
-    throw new Error(payload?.error || `HTTP ${resp.status}`);
-  }
+function xmlEscape(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 }
 
-function downloadPdfBlob(blob, fileName) {
+function buildExcelSpreadsheetXml(dataset) {
+  const rows = (dataset?.data || []).map((row) => `
+    <Row>
+      <Cell><Data ss:Type="String">${xmlEscape(formatPdfDateTime(row.ms))}</Data></Cell>
+      <Cell><Data ss:Type="String">${xmlEscape(String(row.category || '—'))}</Data></Cell>
+      <Cell><Data ss:Type="String">${xmlEscape(row.type === 'income' ? tt('income', 'Kirim') : tt('expense', 'Chiqim'))}</Data></Cell>
+      <Cell ss:StyleID="amount"><Data ss:Type="Number">${Number(row.amount || 0)}</Data></Cell>
+      <Cell><Data ss:Type="String">${xmlEscape(row.receipt || row.receipt_url ? 'Bor' : "Yo'q")}</Data></Cell>
+      <Cell><Data ss:Type="String">${xmlEscape(String(row.source || 'mini_app'))}</Data></Cell>
+    </Row>`).join('');
+
+  return `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:html="http://www.w3.org/TR/REC-html40">
+ <Styles>
+  <Style ss:ID="Default" ss:Name="Normal">
+   <Alignment ss:Vertical="Center"/>
+   <Font ss:FontName="Calibri" ss:Size="11"/>
+  </Style>
+  <Style ss:ID="head">
+   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+   <Font ss:Bold="1" ss:Color="#FFFFFF"/>
+   <Interior ss:Color="#111827" ss:Pattern="Solid"/>
+  </Style>
+  <Style ss:ID="title">
+   <Font ss:Bold="1" ss:Size="13"/>
+  </Style>
+  <Style ss:ID="amount">
+   <NumberFormat ss:Format="#,##0"/>
+  </Style>
+ </Styles>
+ <Worksheet ss:Name="Hisobot">
+  <Table>
+   <Column ss:Width="130"/>
+   <Column ss:Width="220"/>
+   <Column ss:Width="90"/>
+   <Column ss:Width="110"/>
+   <Column ss:Width="70"/>
+   <Column ss:Width="100"/>
+   <Row><Cell ss:MergeAcross="5" ss:StyleID="title"><Data ss:Type="String">Kassa - Excel hisobot</Data></Cell></Row>
+   <Row><Cell ss:MergeAcross="5"><Data ss:Type="String">Davr: ${xmlEscape(`${dataset.sStr.replaceAll('-', '.')} — ${dataset.eStr.replaceAll('-', '.')}`)}</Data></Cell></Row>
+   <Row>
+    <Cell><Data ss:Type="String">Kirim</Data></Cell>
+    <Cell ss:StyleID="amount"><Data ss:Type="Number">${Number(dataset.income || 0)}</Data></Cell>
+    <Cell><Data ss:Type="String">Chiqim</Data></Cell>
+    <Cell ss:StyleID="amount"><Data ss:Type="Number">${Number(dataset.expense || 0)}</Data></Cell>
+    <Cell><Data ss:Type="String">Qoldiq</Data></Cell>
+    <Cell ss:StyleID="amount"><Data ss:Type="Number">${Number(dataset.balance || 0)}</Data></Cell>
+   </Row>
+   <Row><Cell><Data ss:Type="String">Operatsiyalar</Data></Cell><Cell><Data ss:Type="Number">${dataset.data.length}</Data></Cell><Cell><Data ss:Type="String">Cheklar</Data></Cell><Cell><Data ss:Type="Number">${Number(dataset.receipts || 0)}</Data></Cell><Cell><Data ss:Type="String">Yaratildi</Data></Cell><Cell><Data ss:Type="String">${xmlEscape(formatPdfDateTime(Date.now()))}</Data></Cell></Row>
+   <Row/>
+   <Row>
+    <Cell ss:StyleID="head"><Data ss:Type="String">Sana</Data></Cell>
+    <Cell ss:StyleID="head"><Data ss:Type="String">Kategoriya</Data></Cell>
+    <Cell ss:StyleID="head"><Data ss:Type="String">Tur</Data></Cell>
+    <Cell ss:StyleID="head"><Data ss:Type="String">Summa (so'm)</Data></Cell>
+    <Cell ss:StyleID="head"><Data ss:Type="String">Chek</Data></Cell>
+    <Cell ss:StyleID="head"><Data ss:Type="String">Manba</Data></Cell>
+   </Row>${rows}
+  </Table>
+ </Worksheet>
+</Workbook>`;
+}
+
+function buildExcelBlob(dataset) {
+  return new Blob([buildExcelSpreadsheetXml(dataset)], { type: 'application/vnd.ms-excel;charset=utf-8' });
+}
+
+function downloadBlob(blob, fileName) {
   const href = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = href;
@@ -2057,6 +2125,86 @@ function downloadPdfBlob(blob, fileName) {
   setTimeout(() => URL.revokeObjectURL(href), 4000);
 }
 
+function downloadPdfBlob(blob, fileName) {
+  downloadBlob(blob, fileName);
+}
+
+function downloadExcelBlob(blob, fileName) {
+  downloadBlob(blob, fileName);
+}
+
+async function blobToDataUrl(blob) {
+  const reader = new FileReader();
+  return new Promise((resolve, reject) => {
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function sendReportFilesToBot(pdfBlob, pdfFileName, dataset) {
+  const pdfBase64 = await blobToDataUrl(pdfBlob);
+  const resp = await fetch('/api/send-report-files', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user_id: UID,
+      pdf_file_name: pdfFileName,
+      pdf_caption: `📄 ${tt('pdf_title', 'PDF Hisobot')}
+${dataset.sStr.replaceAll('-', '.')} — ${dataset.eStr.replaceAll('-', '.')}`,
+      pdf_base64: pdfBase64,
+      excel_file_name: getExportExcelFileName(),
+      excel_caption: `📊 Excel hisobot
+${dataset.sStr.replaceAll('-', '.')} — ${dataset.eStr.replaceAll('-', '.')}`,
+      rows: dataset.data.map((row) => ({
+        date: new Date(row.ms || Date.now()).toISOString(),
+        category: row.category,
+        type: row.type,
+        amount: row.amount,
+        receipt_url: row.receipt_url || '',
+        source: row.source || 'mini_app'
+      })),
+      meta: {
+        period: `${dataset.sStr.replaceAll('-', '.')} — ${dataset.eStr.replaceAll('-', '.')}`,
+        generatedAt: formatPdfDateTime(Date.now())
+      },
+      summary: {
+        count: dataset.data.length,
+        receipts: dataset.receipts,
+        income: dataset.income,
+        expense: dataset.expense,
+        balance: dataset.balance
+      }
+    })
+  });
+
+  let payload = {};
+  try { payload = await resp.json(); } catch { }
+  if (!resp.ok || payload?.ok === false) {
+    throw new Error(payload?.error || `HTTP ${resp.status}`);
+  }
+}
+
+async function notifyMiniAppTxSaved(row) {
+  if (!UID || !row) return;
+  try {
+    await fetch('/api/notify-miniapp-tx', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: UID,
+        amount: Number(row.amount || 0),
+        type: row.type,
+        category: row.category,
+        receipt_url: row.receipt_url || '',
+        source: row.source || 'mini_app'
+      })
+    });
+  } catch (error) {
+    console.warn('[notifyMiniAppTxSaved]', error);
+  }
+}
+
 function makePDF() {
   const pdfMake = window.pdfMake;
   const createBtn = $('ex-create-btn');
@@ -2065,12 +2213,9 @@ function makePDF() {
     return;
   }
 
-  const { sStr, eStr, start, end } = getExportRange();
+  const dataset = getExportDataset();
+  const { sStr, eStr, data, income: inc, expense: exp, receipts, balance } = dataset;
   if (!sStr || !eStr) return;
-
-  const data = txList
-    .filter(t => t.ms >= start && t.ms <= end)
-    .sort((a, b) => a.ms - b.ms);
 
   if (!data.length) {
     showErr(tt('no_data_error', "Hozircha ma'lumot yo'q"));
@@ -2083,10 +2228,7 @@ function makePDF() {
   }
 
   const fileName = getExportFileName();
-  const inc = data.filter(t => t.type === 'income').reduce((a, b) => a + b.amount, 0);
-  const exp = data.filter(t => t.type === 'expense').reduce((a, b) => a + b.amount, 0);
-  const receipts = data.filter(t => t.receipt || t.receipt_url).length;
-  const balance = inc - exp;
+  const excelFileName = getExportExcelFileName();
 
   const tableBody = [
     [
@@ -2182,20 +2324,21 @@ function makePDF() {
   };
 
   pdfMake.createPdf(dd).getBlob(async (blob) => {
+    const excelBlob = buildExcelBlob(dataset);
     try {
-      const caption = `📄 ${tt('pdf_title', 'PDF Hisobot')}
-${sStr.replaceAll('-', '.')} — ${eStr.replaceAll('-', '.')}`;
       if (UID && tg?.initDataUnsafe?.user?.id) {
-        await sendPdfToBot(blob, fileName, caption);
-        showErr(currentLang === 'ru' ? 'PDF ботga yuborildi ✅' : currentLang === 'en' ? 'PDF sent to the bot ✅' : 'PDF botga yuborildi ✅', 2600);
+        await sendReportFilesToBot(blob, fileName, dataset);
+        showErr(currentLang === 'ru' ? 'PDF va Excel botga yuborildi ✅' : currentLang === 'en' ? 'PDF and Excel were sent to the bot ✅' : 'PDF va Excel botga yuborildi ✅', 2800);
       } else {
         downloadPdfBlob(blob, fileName);
+        downloadExcelBlob(excelBlob, excelFileName);
       }
       closeOv('ov-export');
     } catch (error) {
       console.warn('[makePDF]', error);
       downloadPdfBlob(blob, fileName);
-      showErr(currentLang === 'ru' ? 'Botga yuborish muvaffaqiyatsiz. Fayl yuklab olindi.' : currentLang === 'en' ? 'Sending to the bot failed. The file was downloaded instead.' : "Botga yuborib bo'lmadi. Fayl yuklab olindi.", 3200);
+      downloadExcelBlob(excelBlob, excelFileName);
+      showErr(currentLang === 'ru' ? 'Botga yuborilmadi. PDF va Excel yuklab olindi.' : currentLang === 'en' ? 'Sending to the bot failed. PDF and Excel were downloaded.' : "Botga yuborilmadi. PDF va Excel yuklab olindi.", 3400);
       closeOv('ov-export');
     } finally {
       if (createBtn) {

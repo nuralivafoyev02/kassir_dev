@@ -21,6 +21,7 @@ const db = createClient(SUPA_URL, SUPA_KEY);
 
 // OpenAI — faqat ovozli xabar uchun (ixtiyoriy)
 let openai = null;
+let openaiDisabledUntil = 0;
 if (OAI_KEY && !OAI_KEY.startsWith('your-')) {
   try {
     const { OpenAI } = require('openai');
@@ -41,19 +42,20 @@ const KB = {
 
 const GUIDE = `<b>📖 Qo'llanma</b>
 
-Menga oddiy matn yozing — men siz nima demoqchi ekaningizni kontekstga qarab tushunishga harakat qilaman 🤖
+Menga oddiy matn yozing — men gap mazmuniga qarab kirim, chiqim, qarz va rejangizni tushunishga harakat qilaman 🤖
 
 <b>💸 Chiqim misollari:</b>
   • <i>50 ming tushlik</i>
   • <i>Taksiga 20 ming berdim</i>
   • <i>Akamga 100 ming o'tkazdim</i>
+  • <i>Doston uchun 180 ming kiyim oldim</i>
 
 <b>💰 Kirim misollari:</b>
   • <i>200 ming dadam berdilar</i>
   • <i>Mijozdan 500 ming oldim</i>
   • <i>Oylik tushdi 4 mln</i>
 
-<b>🤝 Qarz yozish:</b>
+<b>🤝 Qarz berish / olish:</b>
   • <i>Suxrobga qarz 100 ming</i>
   • <i>Suxrobga 100 ming qarz berdim</i>
   • <i>Suxrobdan qarz oldim 250 ming</i>
@@ -63,16 +65,21 @@ Menga oddiy matn yozing — men siz nima demoqchi ekaningizni kontekstga qarab t
   • <i>100 ming Suxrobdan qaytdi</i>
   • <i>Suxrobga 80 ming qaytardim</i>
 
-<b>🎯 Reja / plan tuzish:</b>
+<b>🎯 Reja / limit tuzish:</b>
   • <i>5 mln farzandlarim uchun plan</i>
   • <i>1 mln ovqat uchun reja</i>
   • <i>Transport 800 ming limit</i>
+  • <i>500 ming qolganda ogohlantir</i>
+
+<b>🧾 Kimga / nima uchun bo'lgan chiqim:</b>
+  • <i>Ozodbek uchun 120 ming benzin</i>
+  • <i>Shuhratga 90 ming taksi berdim</i>
 
 <b>🧾 Chek qo'shish:</b>
 Chek rasmini izoh bilan birga yuboring. Masalan: <i>78 ming market</i>
 
 <b>ℹ️ Eslatma:</b>
-Qarz berilganda balans darhol o'zgarmaydi. Qarz qaytganda yoki qaytarganingizda qarz yozuvi yangilanadi va mos ravishda hisobga olinadi.`;
+Qarz berilganda balans darhol o'zgarmaydi. Qarz qaytganda yoki qaytarganingizda qarz yozuvi yangilanadi va mos ravishda hisobga olinadi. Mini App ichidan kiritilgan operatsiyalar ham botga ko'rinadi.`;
 
 const DEFAULT_RATE = 12200;
 const ADMIN_IDS = new Set((process.env.ADMIN_IDS || '').split(',').map(v => v.trim()).filter(Boolean));
@@ -134,6 +141,12 @@ function isNullConstraintOnColumn(error, column) {
   const msg = String(error?.message || error?.details || error?.hint || '').toLowerCase();
   const target = String(column || '').toLowerCase();
   return !!target && msg.includes(`null value in column "${target}"`) && msg.includes('not-null constraint');
+}
+
+function isQuotaOrRateLimitError(error) {
+  const status = Number(error?.status || error?.code || error?.response?.status || 0);
+  const msg = String(error?.message || error?.response?.data?.error?.message || '').toLowerCase();
+  return status === 429 || msg.includes('insufficient_quota') || msg.includes('current quota') || msg.includes('rate limit') || msg.includes('too many requests');
 }
 
 function categoryLimitNameColumn() {
@@ -689,6 +702,7 @@ function resolveCategoryForUser(parsed, categories, rawText = '') {
 // GPT orkali matndan (ovozli xabardan) ma'lumotlarni olish
 async function gptParse(text) {
   if (!openai || !text) return null;
+  if (openaiDisabledUntil && Date.now() < openaiDisabledUntil) return null;
 
   try {
     const prompt = `Ushbu o'zbek tilidagi moliyaviy xabardan summa (amount), tur (type: income yoki expense) va kategoriyani (category) JSON formatida aniqlab ber.
@@ -720,6 +734,11 @@ Agar tushunarsiz bo'lsa, null qaytaring.`;
       isUSD: !!data.isUSD
     };
   } catch (e) {
+    if (isQuotaOrRateLimitError(e)) {
+      openaiDisabledUntil = Date.now() + 30 * 60 * 1000;
+      warn('gpt-parse-fallback', { reason: e?.message || 'quota/rate-limit', disabledUntil: new Date(openaiDisabledUntil).toISOString() });
+      return null;
+    }
     logErr('gpt-parse', e);
     return null;
   }

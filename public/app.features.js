@@ -16,6 +16,7 @@
   let debtSearchQuery = '';
   let planFilterState = 'all';
   let planAppNotifyReady = false;
+  let lastFeatureRefreshAt = 0;
   const planNotifyState = new Map();
 
   const debtStoreKey = () => `kassa_debts_${UID}`;
@@ -160,6 +161,8 @@
     return !!target && msg.includes('null value') && msg.includes(target) && msg.includes('not-null constraint');
   };
   const normalizePlanName = (row) => String(row?.category_name || row?.name || row?.category || '').trim();
+  const normalizeCategoryKey = (value) => normalizeTextForMatch(baseCategoryName(value || ''));
+  const planMatchesTransaction = (plan, tx) => normalizeCategoryKey(tx?.category) === normalizeCategoryKey(plan?.category_name);
   const normalizePlanAmount = (row) => Number(row?.amount ?? row?.limit_amount ?? row?.plan_amount ?? row?.limit ?? 0) || 0;
   const normalizePlanAlert = (row) => Number(row?.alert_before ?? row?.alert_amount ?? row?.alert_limit ?? 0) || 0;
   const planNameCol = () => (planNameColumnSupported === 'name' ? 'name' : 'category_name');
@@ -960,14 +963,16 @@
     const spent = txList
       .filter(tx => tx.type === 'expense')
       .filter(tx => monthKey(tx.ms) === targetMonth)
-      .filter(tx => baseCategoryName(tx.category) === plan.category_name)
+      .filter(tx => planMatchesTransaction(plan, tx))
       .reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
-    const remaining = Math.max(0, budget - spent);
-    const percent = budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : 0;
+    const rawRemaining = budget - spent;
+    const remaining = Math.max(0, rawRemaining);
+    const percentRaw = budget > 0 ? Math.round((spent / budget) * 100) : 0;
+    const percent = budget > 0 ? Math.max(0, Math.min(100, percentRaw)) : 0;
     const completed = budget > 0 && spent >= budget;
     const exceeded = budget > 0 && spent > budget;
     const overBy = Math.max(0, spent - budget);
-    return { spent, remaining, percent, completed, exceeded, overBy, near: budget > 0 ? remaining <= Number(plan.alert_before || 0) && !completed : false };
+    return { spent, remaining, rawRemaining, percent, completed, exceeded, overBy, near: budget > 0 ? remaining <= Number(plan.alert_before || 0) && !completed : false };
   }
 
   window.setPlanFilter = function setPlanFilter(mode = 'all') {
@@ -1151,6 +1156,7 @@
       }
       planList.unshift(normalizePlan(result.data || payload));
     }
+    await refreshFeatureData('plan', true);
     renderPlans();
     closeOv('ov-plan-form');
     vib('light');
@@ -1173,6 +1179,29 @@
     syncPlanAppNotifications();
   }
 
+  async function refreshFeatureData(mode = 'all', force = false) {
+    if (!db || !UID) return;
+    const now = Date.now();
+    if (!force && now - lastFeatureRefreshAt < 4000) return;
+    lastFeatureRefreshAt = now;
+    try {
+      if (mode === 'all' || mode === 'debt') await loadDebtsData();
+      if (mode === 'all' || mode === 'plan') await loadPlanData();
+      if (mode === 'debt') renderDebts();
+      if (mode === 'plan') {
+        populatePlanCategoryOptions();
+        renderPlans();
+      }
+      if (mode === 'all') {
+        populatePlanCategoryOptions();
+        renderDebts();
+        renderPlans();
+      }
+    } catch (error) {
+      console.warn('[features] refresh failed', error);
+    }
+  }
+
   function bindFeatureRealtime() {
     if (!db || !UID) return;
     if (!debtRealtimeBound && debtTableAvailable !== false) {
@@ -1180,7 +1209,11 @@
       db.channel('debt-changes')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'debts', filter: `user_id=eq.${UID}` }, payload => {
           const { eventType, new: newRow, old: oldRow } = payload;
-          if (eventType === 'INSERT') debtList.unshift(normalizeDebt(newRow));
+          if (eventType === 'INSERT') {
+            const next = normalizeDebt(newRow);
+            const idx = debtList.findIndex(item => Number(item.id) === Number(next.id));
+            if (idx >= 0) debtList[idx] = next; else debtList.unshift(next);
+          }
           if (eventType === 'UPDATE') {
             const idx = debtList.findIndex(item => Number(item.id) === Number(newRow.id));
             if (idx >= 0) debtList[idx] = normalizeDebt(newRow);
@@ -1194,7 +1227,11 @@
       db.channel('plan-changes')
         .on('postgres_changes', { event: '*', schema: 'public', table: 'category_limits', filter: `user_id=eq.${UID}` }, payload => {
           const { eventType, new: newRow, old: oldRow } = payload;
-          if (eventType === 'INSERT') planList.unshift(normalizePlan(newRow));
+          if (eventType === 'INSERT') {
+            const next = normalizePlan(newRow);
+            const idx = planList.findIndex(item => Number(item.id) === Number(next.id));
+            if (idx >= 0) planList[idx] = next; else planList.unshift(next);
+          }
           if (eventType === 'UPDATE') {
             const idx = planList.findIndex(item => Number(item.id) === Number(newRow.id));
             if (idx >= 0) planList[idx] = normalizePlan(newRow);
@@ -1222,8 +1259,14 @@
     const originalGoTab = goTab;
     goTab = function goTabEnhanced(tab, opts = {}) {
       const out = originalGoTab.call(this, tab, opts);
-      if (tab === 'debt') renderDebts();
-      if (tab === 'plan') renderPlans();
+      if (tab === 'debt') {
+        renderDebts();
+        refreshFeatureData('debt');
+      }
+      if (tab === 'plan') {
+        renderPlans();
+        refreshFeatureData('plan');
+      }
       return out;
     };
 
@@ -1269,6 +1312,10 @@
     renderPlans();
     renderStgCatsEnhanced();
     bindFeatureRealtime();
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') refreshFeatureData('all');
+    });
   }
 
   if (document.readyState === 'loading') {

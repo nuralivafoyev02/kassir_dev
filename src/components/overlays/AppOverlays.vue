@@ -212,8 +212,8 @@
   </div>
   <div class="ov center" id="ov-export" onclick="closeOv('ov-export',event)">
     <div class="sheet c exp-modal" onclick="event.stopPropagation()">
-      <div class="sh-ttl">📄 <span data-i18n="pdf_title">PDF Hisobot</span></div>
-      <div class="exp-hint" data-i18n="pdf_modal_hint">PDF hisobot Unicode formatda yaratiladi va kirill matnlar to‘g‘ri chiqadi.</div>
+      <div class="sh-ttl">📄 <span>Hisobot (PDF + Excel)</span></div>
+      <div class="exp-hint">Hisobot 2 ta fayl ko'rinishida tayyorlanadi: PDF va Excel. Telegram botga alohida yuboriladi, yuborib bo'lmasa telefoningizga yuklab olinadi.</div>
       <div class="exp-presets">
         <button class="exp-chip" type="button" data-exp-preset="today" onclick="setExportPreset('today')" data-i18n="pdf_preset_today">Bugun</button>
         <button class="exp-chip" type="button" data-exp-preset="month" onclick="setExportPreset('month')" data-i18n="pdf_preset_month">Shu oy</button>
@@ -250,7 +250,7 @@
         <div class="exp-s"><span data-i18n="pdf_file_label">Fayl nomi</span><span id="ex-file">Kassa.pdf</span></div>
       </div>
       <div class="mrow"><button class="bcl" onclick="closeOv('ov-export')" data-i18n="cancel">Bekor</button><button class="bpri"
-          id="ex-create-btn" onclick="makePDF()" data-i18n="pdf_create">Yaratish</button></div>
+          id="ex-create-btn" onclick="makePDF()">Yaratish va yuborish</button></div>
     </div>
   </div>
   <div class="ov" id="ov-settings" onclick="closeOv('ov-settings',event)">
