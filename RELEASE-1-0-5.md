@@ -41,7 +41,28 @@
 - Export modal matnlari ham yangilandi.
 
 ### 7. Server va API
+- Yangi endpointlar qo'shildi:
+  - `/api/send-report-files`
+  - `/api/notify-miniapp-tx`
 - Dev server body parse limiti oshirildi, katta PDF payloadlarda uzilib qolmasligi uchun.
 
+## O'zgargan fayllar
+- `api/bot.js`
+- `api/cron-reminders.js`
+- `api/send-report-files.js` *(yangi)*
+- `api/notify-miniapp-tx.js` *(yangi)*
+- `server.js`
+- `public/app.js`
+- `public/app.features.js`
+- `src/components/overlays/AppOverlays.vue`
+- `supabase.sql`
+
 ## Muhim eslatma
+- Daily reminder ustunlari uchun `supabase.sql` dagi yangi migrationni ishga tushirish tavsiya qilinadi.
 - Excel fayl `.xls` formatida Spreadsheet XML ko'rinishida yuboriladi; Excel va ko'p telefon office ilovalari buni ochadi.
+
+
+## Hotfix 1.0.5-1
+- Mini App limit yaratishda `duplicate key value violates unique constraint category_limits_user_id_category_type_key` xatoligi bartaraf etildi.
+- Legacy `category_limits` sxemasi (`category`, `type`, `name`, `category_name`) bilan moslik kuchaytirildi.
+- Bot orqali yaratilgan limit/rejalar Mini App plan bo'limida ko'rinishi uchun yuklash va saqlash fallbacklari kengaytirildi.

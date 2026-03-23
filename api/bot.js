@@ -113,6 +113,7 @@ let txSourceColumnSupported = null;
 let txSourceRefColumnSupported = null;
 let debtSettlementColumnSupported = null;
 let categoryLimitNameColumnSupported = null;
+const CATEGORY_LIMIT_NAME_COLUMNS = ['category_name', 'name', 'category'];
 
 function fmtDateTime(v) {
   if (!v) return '—';
@@ -150,34 +151,40 @@ function isQuotaOrRateLimitError(error) {
 }
 
 function categoryLimitNameColumn() {
-  return categoryLimitNameColumnSupported === 'name' ? 'name' : 'category_name';
+  return CATEGORY_LIMIT_NAME_COLUMNS.includes(categoryLimitNameColumnSupported) ? categoryLimitNameColumnSupported : 'category_name';
 }
 
-function alternateCategoryLimitNameColumn(col) {
-  return col === 'name' ? 'category_name' : 'name';
+function nextCategoryLimitNameColumn(col) {
+  const idx = CATEGORY_LIMIT_NAME_COLUMNS.indexOf(col);
+  return CATEGORY_LIMIT_NAME_COLUMNS[(idx + 1) % CATEGORY_LIMIT_NAME_COLUMNS.length];
 }
 
 async function runCategoryLimitQuery(executor) {
   let nameCol = categoryLimitNameColumn();
   let result = await executor(nameCol);
+  let attempts = 0;
 
-  if (result?.error && isMissingColumnError(result.error, nameCol)) {
-    const alternate = alternateCategoryLimitNameColumn(nameCol);
-    categoryLimitNameColumnSupported = alternate === 'name' ? 'name' : null;
-    nameCol = alternate;
+  while (result?.error && isMissingColumnError(result.error, nameCol) && attempts < CATEGORY_LIMIT_NAME_COLUMNS.length - 1) {
+    nameCol = nextCategoryLimitNameColumn(nameCol);
+    categoryLimitNameColumnSupported = nameCol;
     result = await executor(nameCol);
+    attempts += 1;
   }
 
-  if (!result?.error) {
-    categoryLimitNameColumnSupported = nameCol === 'name' ? 'name' : null;
-  }
+  if (!result?.error) categoryLimitNameColumnSupported = nameCol;
 
   return { nameCol, result };
 }
 
 function normalizeCategoryLimitRow(row) {
   if (!row) return row;
-  return { ...row, category_name: row.category_name || row.name || '' };
+  return {
+    ...row,
+    category_name: row.category_name || row.name || row.category || '',
+    amount: Number(row.amount ?? row.limit_amount ?? row.plan_amount ?? row.limit ?? 0) || 0,
+    alert_before: Number(row.alert_before ?? row.alert_amount ?? row.alert_limit ?? 0) || 0,
+    month_key: row.month_key || row.month || monthKeyOf(Date.now()),
+  };
 }
 
 
@@ -1039,9 +1046,37 @@ async function savePlanIntent(userId, chatId, intent) {
   if (current.error && !isMissingTableError(current.error, 'category_limits')) throw current.error;
   current.data = normalizeCategoryLimitRow(current.data);
 
+  if (!current.data?.id) {
+    let legacyCurrent = await runCategoryLimitQuery(col => db
+      .from('category_limits')
+      .select(`id, amount, month_key, ${col}`)
+      .eq('user_id', userId)
+      .ilike(col, categoryName)
+      .eq('type', 'expense')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle());
+
+    if (legacyCurrent.result?.error && isMissingColumnError(legacyCurrent.result.error, 'type')) {
+      legacyCurrent = await runCategoryLimitQuery(col => db
+        .from('category_limits')
+        .select(`id, amount, month_key, ${col}`)
+        .eq('user_id', userId)
+        .ilike(col, categoryName)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle());
+    }
+
+    const legacyRow = normalizeCategoryLimitRow(legacyCurrent.result?.data);
+    if (legacyRow?.id) current.data = legacyRow;
+  }
+
   const payload = {
     category_id: category?.id || null,
     [nameCol]: categoryName,
+    category: categoryName,
+    type: 'expense',
     amount: intent.amount,
     alert_before: intent.alertBefore,
     notify_bot: true,
@@ -1061,16 +1096,23 @@ async function savePlanIntent(userId, chatId, intent) {
 
       if (!res.error) {
         nameCol = activeNameCol;
-        categoryLimitNameColumnSupported = activeNameCol === 'name' ? 'name' : null;
+        categoryLimitNameColumnSupported = activeNameCol;
         return res;
       }
 
       if (isMissingColumnError(res.error, activeNameCol)) {
-        activeNameCol = alternateCategoryLimitNameColumn(activeNameCol);
-        categoryLimitNameColumnSupported = activeNameCol === 'name' ? 'name' : null;
+        activeNameCol = nextCategoryLimitNameColumn(activeNameCol);
+        categoryLimitNameColumnSupported = activeNameCol;
         writePayload = { ...writePayload, [activeNameCol]: categoryName };
         delete writePayload.category_name;
         delete writePayload.name;
+        if (activeNameCol !== 'category') delete writePayload.category;
+        continue;
+      }
+
+      if (isMissingColumnError(res.error, 'type')) {
+        const { type, ...rest } = writePayload;
+        writePayload = rest;
         continue;
       }
 
@@ -1089,6 +1131,36 @@ async function savePlanIntent(userId, chatId, intent) {
         const { category, ...rest } = writePayload;
         writePayload = rest;
         continue;
+      }
+
+      if (String(res.error?.message || res.error?.details || '').toLowerCase().includes('duplicate key value')) {
+        let legacyCurrent = await runCategoryLimitQuery(col => db
+          .from('category_limits')
+          .select(`id, amount, month_key, ${col}`)
+          .eq('user_id', userId)
+          .ilike(col, categoryName)
+          .eq('type', 'expense')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle());
+
+        if (legacyCurrent.result?.error && isMissingColumnError(legacyCurrent.result.error, 'type')) {
+          legacyCurrent = await runCategoryLimitQuery(col => db
+            .from('category_limits')
+            .select(`id, amount, month_key, ${col}`)
+            .eq('user_id', userId)
+            .ilike(col, categoryName)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle());
+        }
+
+        const duplicateRowId = normalizeCategoryLimitRow(legacyCurrent.result?.data)?.id;
+        if (duplicateRowId && mode !== 'update') {
+          mode = 'update';
+          rowId = duplicateRowId;
+          continue;
+        }
       }
 
       return res;

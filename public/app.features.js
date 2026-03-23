@@ -8,6 +8,7 @@
   let planTableAvailable = null;
   let categoryKeywordsSupported = null;
   let planNameColumnSupported = null;
+  const PLAN_NAME_COLUMNS = ['category_name', 'name', 'category'];
   let featureBooted = false;
   let debtRealtimeBound = false;
   let planRealtimeBound = false;
@@ -165,7 +166,8 @@
   const planMatchesTransaction = (plan, tx) => normalizeCategoryKey(tx?.category) === normalizeCategoryKey(plan?.category_name);
   const normalizePlanAmount = (row) => Number(row?.amount ?? row?.limit_amount ?? row?.plan_amount ?? row?.limit ?? 0) || 0;
   const normalizePlanAlert = (row) => Number(row?.alert_before ?? row?.alert_amount ?? row?.alert_limit ?? 0) || 0;
-  const planNameCol = () => (planNameColumnSupported === 'name' ? 'name' : 'category_name');
+  const planNameCol = () => (PLAN_NAME_COLUMNS.includes(planNameColumnSupported) ? planNameColumnSupported : 'category_name');
+  const nextPlanNameCol = (col) => PLAN_NAME_COLUMNS[(PLAN_NAME_COLUMNS.indexOf(col) + 1 + PLAN_NAME_COLUMNS.length) % PLAN_NAME_COLUMNS.length];
   const planDbPayload = (payload) => {
     const next = { ...payload };
     const value = normalizePlanName(next);
@@ -494,7 +496,10 @@
       throw error;
     }
     planTableAvailable = true;
-    if (Array.isArray(data) && data.some(row => row && typeof row === 'object' && 'name' in row && !('category_name' in row))) planNameColumnSupported = 'name';
+    if (Array.isArray(data)) {
+      if (data.some(row => row && typeof row === 'object' && 'category' in row && !('category_name' in row) && !('name' in row))) planNameColumnSupported = 'category';
+      else if (data.some(row => row && typeof row === 'object' && 'name' in row && !('category_name' in row))) planNameColumnSupported = 'name';
+    }
     planList = (data || [])
       .map(normalizePlan)
       .sort((a, b) => {
@@ -507,6 +512,39 @@
 
   function persistLocalDebts() { writeJson(debtStoreKey(), debtList); }
   function persistLocalPlans() { writeJson(planStoreKey(), planList); }
+
+  async function findExistingPlanRecord(categoryName, monthKeyValue) {
+    if (!db || !UID) return null;
+    for (const col of PLAN_NAME_COLUMNS) {
+      let query = db.from('category_limits').select('*').eq('user_id', UID).ilike(col, categoryName).limit(1);
+      if (monthKeyValue) query = query.eq('month_key', monthKeyValue);
+      let res = await query.maybeSingle();
+      if (res.error && missingColumn(res.error, col)) continue;
+      if (res.error && missingColumn(res.error, 'month_key')) {
+        query = db.from('category_limits').select('*').eq('user_id', UID).ilike(col, categoryName).limit(1);
+        res = await query.maybeSingle();
+      }
+      if (res.error && missingColumn(res.error, 'type')) {
+        // ignore
+      }
+      if (!res.error && res.data) {
+        planNameColumnSupported = col;
+        return normalizePlan(res.data);
+      }
+    }
+
+    for (const col of PLAN_NAME_COLUMNS) {
+      let query = db.from('category_limits').select('*').eq('user_id', UID).eq('type', 'expense').ilike(col, categoryName).limit(1);
+      let res = await query.maybeSingle();
+      if (res.error && missingColumn(res.error, col)) continue;
+      if (res.error && missingColumn(res.error, 'type')) continue;
+      if (!res.error && res.data) {
+        planNameColumnSupported = col;
+        return normalizePlan(res.data);
+      }
+    }
+    return null;
+  }
 
   function debtDirectionLabel(direction) {
     return direction === 'payable'
@@ -815,7 +853,7 @@
       return;
     }
 
-    if (id) {
+    if (resolvedId) {
       const { data, error } = await db.from('debts').update({ person_name, amount, direction, due_at, remind_at, note }).eq('id', id).eq('user_id', UID).select().maybeSingle();
       if (error) {
         if (relationMissing(error, 'debts')) { debtTableAvailable = false; return window.saveDebtForm(); }
@@ -1093,13 +1131,20 @@
     if (!category_name) return showErr(currentLang === 'ru' ? 'Kategoriyani tanlang' : currentLang === 'en' ? 'Choose a category' : 'Kategoriyani tanlang');
     if (!amount) return showErr(tt('err_amount_required', 'Summani kiriting'));
 
-    const payload = normalizePlan({ id: id || Date.now(), user_id: UID, category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, month_key: mk, is_active });
-    const buildPlanWritePayload = (includeMonth = true, includeLegacyCategory = false) => {
+    let resolvedId = id;
+    if (!resolvedId) {
+      const existingPlan = await findExistingPlanRecord(category_name, mk);
+      if (existingPlan?.id) resolvedId = Number(existingPlan.id);
+    }
+
+    const payload = normalizePlan({ id: resolvedId || Date.now(), user_id: UID, category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, month_key: mk, is_active });
+    const buildPlanWritePayload = (includeMonth = true, includeLegacyCategory = false, includeLegacyType = true) => {
       const base = planDbPayload({ category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, ...(includeMonth ? { month_key: mk } : {}), is_active });
       if (includeLegacyCategory) base.category = category_name;
+      if (includeLegacyType) base.type = 'expense';
       return base;
     };
-    const dbPayload = buildPlanWritePayload(true, false);
+    const dbPayload = buildPlanWritePayload(true, false, true);
     if (!db || planTableAvailable === false) {
       const idx = planList.findIndex(item => Number(item.id) === Number(payload.id));
       if (idx >= 0) planList[idx] = payload; else planList.unshift(payload);
@@ -1113,40 +1158,53 @@
       let activePayload = { ...dbPayload };
       for (let i = 0; i < 6; i += 1) {
         let result = mode === 'update'
-          ? await db.from('category_limits').update(activePayload).eq('id', id).eq('user_id', UID).select().maybeSingle()
+          ? await db.from('category_limits').update(activePayload).eq('id', resolvedId).eq('user_id', UID).select().maybeSingle()
           : await db.from('category_limits').insert([{ user_id: UID, ...activePayload }]).select().maybeSingle();
 
         if (!result.error) return result;
 
-        if (missingColumn(result.error, 'category_name')) {
-          planNameColumnSupported = 'name';
-          activePayload = buildPlanWritePayload('month_key' in activePayload, 'category' in activePayload);
+        if (missingColumn(result.error, planNameCol())) {
+          planNameColumnSupported = nextPlanNameCol(planNameCol());
+          activePayload = buildPlanWritePayload('month_key' in activePayload, 'category' in activePayload, 'type' in activePayload);
           continue;
         }
         if (missingColumn(result.error, 'month_key')) {
-          activePayload = buildPlanWritePayload(false, 'category' in activePayload);
+          activePayload = buildPlanWritePayload(false, 'category' in activePayload, 'type' in activePayload);
           continue;
         }
         if (notNullConstraintOn(result.error, 'category')) {
-          activePayload = buildPlanWritePayload('month_key' in activePayload, true);
+          activePayload = buildPlanWritePayload('month_key' in activePayload, true, 'type' in activePayload);
           continue;
         }
         if (missingColumn(result.error, 'category')) {
-          activePayload = buildPlanWritePayload('month_key' in activePayload, false);
+          activePayload = buildPlanWritePayload('month_key' in activePayload, false, 'type' in activePayload);
           continue;
+        }
+        if (missingColumn(result.error, 'type')) {
+          activePayload = buildPlanWritePayload('month_key' in activePayload, 'category' in activePayload, false);
+          continue;
+        }
+        if (String(result.error?.message || result.error?.details || '').toLowerCase().includes('duplicate key value')) {
+          const existingPlan = await findExistingPlanRecord(category_name, mk);
+          if (existingPlan?.id && mode !== 'update') {
+            resolvedId = Number(existingPlan.id);
+            payload.id = resolvedId;
+            mode = 'update';
+            continue;
+          }
         }
         return result;
       }
       return { error: new Error('Plan write fallback exhausted') };
     };
 
-    if (id) {
+    if (resolvedId) {
       const result = await runPlanMutation('update');
       if (result.error) {
         if (relationMissing(result.error, 'category_limits')) { planTableAvailable = false; return window.savePlanForm(); }
         return showErr(result.error.message || 'Plan update failed');
       }
-      const idx = planList.findIndex(item => Number(item.id) === Number(id));
+      const idx = planList.findIndex(item => Number(item.id) === Number(resolvedId));
       if (idx >= 0) planList[idx] = normalizePlan(result.data || payload);
     } else {
       const result = await runPlanMutation('insert');
