@@ -105,6 +105,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let txSourceColumnSupported = null;
 let txSourceRefColumnSupported = null;
 let debtSettlementColumnSupported = null;
+let categoryLimitNameColumnSupported = null;
 
 function fmtDateTime(v) {
   if (!v) return '—';
@@ -124,8 +125,18 @@ function tgErr(e) {
 }
 
 function isMissingColumnError(error, column) {
-  const msg = String(error?.message || error?.details || '');
-  return msg.includes(`'${column}'`) && msg.includes('schema cache');
+  const msg = String(error?.message || error?.details || error?.hint || '').toLowerCase();
+  const target = String(column || '').toLowerCase();
+  return !!target && msg.includes(target) && (msg.includes('schema cache') || msg.includes('does not exist') || msg.includes('unknown column') || msg.includes('could not find the column'));
+}
+
+function categoryLimitNameColumn() {
+  return categoryLimitNameColumnSupported === 'name' ? 'name' : 'category_name';
+}
+
+function normalizeCategoryLimitRow(row) {
+  if (!row) return row;
+  return { ...row, category_name: row.category_name || row.name || '' };
 }
 
 
@@ -158,23 +169,38 @@ async function sendCategoryLimitAlert(userId, chatId, category, latestAmount, tx
   try {
     const now = Date.now();
     const currentMonth = monthKeyOf(now);
+    let nameCol = categoryLimitNameColumn();
     let limitRes = await db
       .from('category_limits')
-      .select('id, category_name, amount, alert_before, notify_bot, is_active, last_alert_sent_at, month_key')
+      .select(`id, ${nameCol}, amount, alert_before, notify_bot, is_active, last_alert_sent_at, month_key`)
       .eq('user_id', userId)
       .eq('month_key', currentMonth)
       .eq('is_active', true)
-      .ilike('category_name', category)
+      .ilike(nameCol, category)
       .limit(1)
       .maybeSingle();
+
+    if (limitRes.error && isMissingColumnError(limitRes.error, 'category_name')) {
+      categoryLimitNameColumnSupported = 'name';
+      nameCol = categoryLimitNameColumn();
+      limitRes = await db
+        .from('category_limits')
+        .select(`id, ${nameCol}, amount, alert_before, notify_bot, is_active, last_alert_sent_at, month_key`)
+        .eq('user_id', userId)
+        .eq('month_key', currentMonth)
+        .eq('is_active', true)
+        .ilike(nameCol, category)
+        .limit(1)
+        .maybeSingle();
+    }
 
     if (limitRes.error && isMissingColumnError(limitRes.error, 'month_key')) {
       limitRes = await db
         .from('category_limits')
-        .select('id, category_name, amount, alert_before, notify_bot, is_active, last_alert_sent_at')
+        .select(`id, ${nameCol}, amount, alert_before, notify_bot, is_active, last_alert_sent_at`)
         .eq('user_id', userId)
         .eq('is_active', true)
-        .ilike('category_name', category)
+        .ilike(nameCol, category)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -182,11 +208,11 @@ async function sendCategoryLimitAlert(userId, chatId, category, latestAmount, tx
 
     if (limitRes.error) {
       if (isMissingTableError(limitRes.error, 'category_limits')) return;
-      logErr('limit-fetch', limitRes.error, { userId, category });
+      logErr('limit-fetch', limitRes.error, { userId, category, nameCol });
       return;
     }
 
-    const limit = limitRes.data;
+    const limit = normalizeCategoryLimitRow(limitRes.data);
     if (!limit || !limit.notify_bot || !limit.is_active) return;
 
     const spentRes = await db
@@ -957,32 +983,48 @@ async function savePlanIntent(userId, chatId, intent) {
   const category = await ensureExpenseCategory(userId, intent.categoryName);
   const categoryName = category?.name || intent.categoryName;
 
+  let nameCol = categoryLimitNameColumn();
   let current = await db
     .from('category_limits')
-    .select('id, amount, month_key, category_name')
+    .select(`id, amount, month_key, ${nameCol}`)
     .eq('user_id', userId)
     .eq('month_key', intent.monthKey)
-    .ilike('category_name', categoryName)
+    .ilike(nameCol, categoryName)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
 
+  if (current.error && isMissingColumnError(current.error, 'category_name')) {
+    categoryLimitNameColumnSupported = 'name';
+    nameCol = categoryLimitNameColumn();
+    current = await db
+      .from('category_limits')
+      .select(`id, amount, month_key, ${nameCol}`)
+      .eq('user_id', userId)
+      .eq('month_key', intent.monthKey)
+      .ilike(nameCol, categoryName)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+  }
+
   if (current.error && isMissingColumnError(current.error, 'month_key')) {
     current = await db
       .from('category_limits')
-      .select('id, amount, category_name')
+      .select(`id, amount, ${nameCol}`)
       .eq('user_id', userId)
-      .ilike('category_name', categoryName)
+      .ilike(nameCol, categoryName)
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
   }
 
   if (current.error && !isMissingTableError(current.error, 'category_limits')) throw current.error;
+  current.data = normalizeCategoryLimitRow(current.data);
 
   const payload = {
     category_id: category?.id || null,
-    category_name: categoryName,
+    [nameCol]: categoryName,
     amount: intent.amount,
     alert_before: intent.alertBefore,
     notify_bot: true,
@@ -992,8 +1034,20 @@ async function savePlanIntent(userId, chatId, intent) {
   };
 
   if (current.data?.id) {
-    const { error } = await db.from('category_limits').update(payload).eq('id', current.data.id).eq('user_id', userId);
-    if (error) throw error;
+    let updateRes = await db.from('category_limits').update(payload).eq('id', current.data.id).eq('user_id', userId);
+    if (updateRes.error && isMissingColumnError(updateRes.error, 'category_name')) {
+      categoryLimitNameColumnSupported = 'name';
+      nameCol = categoryLimitNameColumn();
+      const fallbackPayload = { ...payload, [nameCol]: categoryName };
+      delete fallbackPayload.category_name;
+      updateRes = await db.from('category_limits').update(fallbackPayload).eq('id', current.data.id).eq('user_id', userId);
+    }
+    if (updateRes.error && isMissingColumnError(updateRes.error, 'month_key')) {
+      const fallbackPayload = { ...payload };
+      delete fallbackPayload.month_key;
+      updateRes = await db.from('category_limits').update(fallbackPayload).eq('id', current.data.id).eq('user_id', userId);
+    }
+    if (updateRes.error) throw updateRes.error;
     await bot.sendMessage(chatId,
       `🎯 <b>Reja yangilandi</b>\n\n📂 Kategoriya: <b>${esc(categoryName)}</b>\n💰 Limit: <b>${numFmt(intent.amount)} so'm</b>\n⚠️ Ogohlantirish: <b>${numFmt(intent.alertBefore)} so'm</b>\n📅 Oy: <b>${esc(intent.monthKey)}</b>\n\nMini App > Reja bo'limida ko'rinadi.`,
       { parse_mode: 'HTML' }
@@ -1001,8 +1055,20 @@ async function savePlanIntent(userId, chatId, intent) {
     return true;
   }
 
-  const { error } = await db.from('category_limits').insert([{ user_id: userId, ...payload }]);
-  if (error) throw error;
+  let insertRes = await db.from('category_limits').insert([{ user_id: userId, ...payload }]);
+  if (insertRes.error && isMissingColumnError(insertRes.error, 'category_name')) {
+    categoryLimitNameColumnSupported = 'name';
+    nameCol = categoryLimitNameColumn();
+    const fallbackPayload = { ...payload, [nameCol]: categoryName };
+    delete fallbackPayload.category_name;
+    insertRes = await db.from('category_limits').insert([{ user_id: userId, ...fallbackPayload }]);
+  }
+  if (insertRes.error && isMissingColumnError(insertRes.error, 'month_key')) {
+    const fallbackPayload = { ...payload };
+    delete fallbackPayload.month_key;
+    insertRes = await db.from('category_limits').insert([{ user_id: userId, ...fallbackPayload }]);
+  }
+  if (insertRes.error) throw insertRes.error;
 
   await bot.sendMessage(chatId,
     `🎯 <b>Reja yaratildi</b>\n\n📂 Kategoriya: <b>${esc(categoryName)}</b>\n💰 Limit: <b>${numFmt(intent.amount)} so'm</b>\n⚠️ Ogohlantirish: <b>${numFmt(intent.alertBefore)} so'm</b>\n📅 Oy: <b>${esc(intent.monthKey)}</b>\n\nMini App > Reja bo'limida ko'rinadi.`,

@@ -7,6 +7,7 @@
   let debtTableAvailable = null;
   let planTableAvailable = null;
   let categoryKeywordsSupported = null;
+  let planNameColumnSupported = null;
   let featureBooted = false;
   let debtRealtimeBound = false;
   let planRealtimeBound = false;
@@ -29,7 +30,7 @@
     }
   };
   const writeJson = (key, value) => {
-    try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch { }
   };
 
   const fmtMoney = (amount) => `${fmt(amount)} ${tt('suffix_uzs', "so'm")}`;
@@ -46,7 +47,7 @@
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return '';
     const pad = v => String(v).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
   const pad2 = (value) => String(value).padStart(2, '0');
   const setDateInputParts = (prefix, value) => {
@@ -147,6 +148,20 @@
   const relationMissing = (error, table) => {
     const msg = String(error?.message || error?.details || '').toLowerCase();
     return msg.includes(`table '${table}'`) || msg.includes(`relation "public.${table}"`) || (msg.includes(table.toLowerCase()) && msg.includes('schema cache')) || msg.includes('does not exist');
+  };
+  const missingColumn = (error, column) => {
+    const msg = String(error?.message || error?.details || error?.hint || '').toLowerCase();
+    const target = String(column || '').toLowerCase();
+    return !!target && msg.includes(target) && (msg.includes('schema cache') || msg.includes('does not exist') || msg.includes('unknown column') || msg.includes('could not find the column'));
+  };
+  const planNameCol = () => (planNameColumnSupported === 'name' ? 'name' : 'category_name');
+  const planDbPayload = (payload) => {
+    const next = { ...payload };
+    const value = String(next.category_name || next.name || '').trim();
+    delete next.category_name;
+    delete next.name;
+    next[planNameCol()] = value;
+    return next;
   };
 
   const debtSettlementSourceRef = (debtId) => `debt:${debtId}`;
@@ -417,7 +432,7 @@
       id: row.id || Date.now(),
       user_id: row.user_id || UID,
       category_id: row.category_id || null,
-      category_name: String(row.category_name || '').trim(),
+      category_name: String(row.category_name || row.name || '').trim(),
       amount: Number(row.amount) || 0,
       alert_before: Number(row.alert_before) || 0,
       notify_bot: row.notify_bot !== false,
@@ -462,6 +477,7 @@
       throw error;
     }
     planTableAvailable = true;
+    if (Array.isArray(data) && data.some(row => row && typeof row === 'object' && 'name' in row && !('category_name' in row))) planNameColumnSupported = 'name';
     planList = (data || []).map(normalizePlan);
   }
 
@@ -626,8 +642,8 @@
           </div>
           <div class="debt-card-actions">
             ${item.status === 'open'
-              ? `<button class="route-action primary" onclick="event.stopPropagation(); markDebtPaid(${item.id})">✅ ${currentLang === 'ru' ? 'Qaytdi' : currentLang === 'en' ? 'Paid back' : 'Qaytdi'}</button>`
-              : `<button class="route-action" onclick="event.stopPropagation(); reopenDebt(${item.id})">↺ ${currentLang === 'ru' ? 'Qayta ochish' : currentLang === 'en' ? 'Reopen' : 'Qayta ochish'}</button>`}
+        ? `<button class="route-action primary" onclick="event.stopPropagation(); markDebtPaid(${item.id})">✅ ${currentLang === 'ru' ? 'Qaytdi' : currentLang === 'en' ? 'Paid back' : 'Qaytdi'}</button>`
+        : `<button class="route-action" onclick="event.stopPropagation(); reopenDebt(${item.id})">↺ ${currentLang === 'ru' ? 'Qayta ochish' : currentLang === 'en' ? 'Reopen' : 'Qayta ochish'}</button>`}
             <button class="route-action" onclick="event.stopPropagation(); openDebtForm(${item.id})">✏️ ${currentLang === 'ru' ? 'Изменить' : currentLang === 'en' ? 'Edit' : 'Tahrirlash'}</button>
             <button class="route-action danger" onclick="event.stopPropagation(); deleteDebt(${item.id})">🗑 ${currentLang === 'ru' ? 'Удалить' : currentLang === 'en' ? 'Delete' : "O'chirish"}</button>
           </div>
@@ -1052,6 +1068,7 @@
     if (!amount) return showErr(tt('err_amount_required', 'Summani kiriting'));
 
     const payload = normalizePlan({ id: id || Date.now(), user_id: UID, category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, month_key: mk, is_active });
+    const dbPayload = planDbPayload({ category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, month_key: mk, is_active });
     if (!db || planTableAvailable === false) {
       const idx = planList.findIndex(item => Number(item.id) === Number(payload.id));
       if (idx >= 0) planList[idx] = payload; else planList.unshift(payload);
@@ -1062,20 +1079,36 @@
     }
 
     if (id) {
-      const { data, error } = await db.from('category_limits').update({ category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, month_key: mk, is_active }).eq('id', id).eq('user_id', UID).select().maybeSingle();
-      if (error) {
-        if (relationMissing(error, 'category_limits')) { planTableAvailable = false; return window.savePlanForm(); }
-        return showErr(error.message || 'Plan update failed');
+      let result = await db.from('category_limits').update(dbPayload).eq('id', id).eq('user_id', UID).select().maybeSingle();
+      if (result.error && missingColumn(result.error, 'category_name')) {
+        planNameColumnSupported = 'name';
+        result = await db.from('category_limits').update(planDbPayload({ category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, month_key: mk, is_active })).eq('id', id).eq('user_id', UID).select().maybeSingle();
+      }
+      if (result.error && missingColumn(result.error, 'month_key')) {
+        const fallback = planDbPayload({ category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, is_active });
+        result = await db.from('category_limits').update(fallback).eq('id', id).eq('user_id', UID).select().maybeSingle();
+      }
+      if (result.error) {
+        if (relationMissing(result.error, 'category_limits')) { planTableAvailable = false; return window.savePlanForm(); }
+        return showErr(result.error.message || 'Plan update failed');
       }
       const idx = planList.findIndex(item => Number(item.id) === Number(id));
-      if (idx >= 0) planList[idx] = normalizePlan(data || payload);
+      if (idx >= 0) planList[idx] = normalizePlan(result.data || payload);
     } else {
-      const { data, error } = await db.from('category_limits').insert([{ user_id: UID, category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, month_key: mk, is_active }]).select().maybeSingle();
-      if (error) {
-        if (relationMissing(error, 'category_limits')) { planTableAvailable = false; return window.savePlanForm(); }
-        return showErr(error.message || 'Plan save failed');
+      let result = await db.from('category_limits').insert([{ user_id: UID, ...dbPayload }]).select().maybeSingle();
+      if (result.error && missingColumn(result.error, 'category_name')) {
+        planNameColumnSupported = 'name';
+        result = await db.from('category_limits').insert([{ user_id: UID, ...planDbPayload({ category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, month_key: mk, is_active }) }]).select().maybeSingle();
       }
-      planList.unshift(normalizePlan(data || payload));
+      if (result.error && missingColumn(result.error, 'month_key')) {
+        const fallback = planDbPayload({ category_id: categoryId, category_name, amount, alert_before, notify_bot, notify_app, is_active });
+        result = await db.from('category_limits').insert([{ user_id: UID, ...fallback }]).select().maybeSingle();
+      }
+      if (result.error) {
+        if (relationMissing(result.error, 'category_limits')) { planTableAvailable = false; return window.savePlanForm(); }
+        return showErr(result.error.message || 'Plan save failed');
+      }
+      planList.unshift(normalizePlan(result.data || payload));
     }
     renderPlans();
     closeOv('ov-plan-form');
