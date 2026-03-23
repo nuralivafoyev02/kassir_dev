@@ -130,6 +130,12 @@ function isMissingColumnError(error, column) {
   return !!target && msg.includes(target) && (msg.includes('schema cache') || msg.includes('does not exist') || msg.includes('unknown column') || msg.includes('could not find the column'));
 }
 
+function isNullConstraintOnColumn(error, column) {
+  const msg = String(error?.message || error?.details || error?.hint || '').toLowerCase();
+  const target = String(column || '').toLowerCase();
+  return !!target && msg.includes(`null value in column "${target}"`) && msg.includes('not-null constraint');
+}
+
 function categoryLimitNameColumn() {
   return categoryLimitNameColumnSupported === 'name' ? 'name' : 'category_name';
 }
@@ -1025,43 +1031,71 @@ async function savePlanIntent(userId, chatId, intent) {
     month_key: intent.monthKey,
   };
 
+  async function writeCategoryLimit(mode, rowId = null) {
+    let activeNameCol = nameCol;
+    let writePayload = { ...payload };
+
+    for (let i = 0; i < 6; i += 1) {
+      const res = mode === 'update'
+        ? await db.from('category_limits').update(writePayload).eq('id', rowId).eq('user_id', userId)
+        : await db.from('category_limits').insert([{ user_id: userId, ...writePayload }]);
+
+      if (!res.error) {
+        nameCol = activeNameCol;
+        categoryLimitNameColumnSupported = activeNameCol === 'name' ? 'name' : null;
+        return res;
+      }
+
+      if (isMissingColumnError(res.error, activeNameCol)) {
+        activeNameCol = alternateCategoryLimitNameColumn(activeNameCol);
+        categoryLimitNameColumnSupported = activeNameCol === 'name' ? 'name' : null;
+        writePayload = { ...writePayload, [activeNameCol]: categoryName };
+        delete writePayload.category_name;
+        delete writePayload.name;
+        continue;
+      }
+
+      if (isMissingColumnError(res.error, 'month_key')) {
+        const { month_key, ...rest } = writePayload;
+        writePayload = rest;
+        continue;
+      }
+
+      if (isNullConstraintOnColumn(res.error, 'category')) {
+        writePayload = { ...writePayload, category: categoryName };
+        continue;
+      }
+
+      if (isMissingColumnError(res.error, 'category')) {
+        const { category, ...rest } = writePayload;
+        writePayload = rest;
+        continue;
+      }
+
+      return res;
+    }
+
+    return { error: new Error('category_limits write fallback exhausted') };
+  }
+
   if (current.data?.id) {
-    let updateRes = await db.from('category_limits').update(payload).eq('id', current.data.id).eq('user_id', userId);
-    if (updateRes.error && isMissingColumnError(updateRes.error, nameCol)) {
-      nameCol = alternateCategoryLimitNameColumn(nameCol);
-      categoryLimitNameColumnSupported = nameCol === 'name' ? 'name' : null;
-      const fallbackPayload = { ...payload, [nameCol]: categoryName };
-      delete fallbackPayload.category_name;
-      delete fallbackPayload.name;
-      updateRes = await db.from('category_limits').update(fallbackPayload).eq('id', current.data.id).eq('user_id', userId);
-    }
-    if (updateRes.error && isMissingColumnError(updateRes.error, 'month_key')) {
-      const fallbackPayload = { ...payload };
-      delete fallbackPayload.month_key;
-      updateRes = await db.from('category_limits').update(fallbackPayload).eq('id', current.data.id).eq('user_id', userId);
-    }
+    const updateRes = await writeCategoryLimit('update', current.data.id);
     if (updateRes.error) throw updateRes.error;
     await bot.sendMessage(chatId,
-      `🎯 <b>Reja yangilandi</b>\n\n📂 Kategoriya: <b>${esc(categoryName)}</b>\n💰 Limit: <b>${numFmt(intent.amount)} so'm</b>\n⚠️ Ogohlantirish: <b>${numFmt(intent.alertBefore)} so'm</b>\n📅 Oy: <b>${esc(intent.monthKey)}</b>\n\nMini App > Reja bo'limida ko'rinadi.`,
+      `🎯 <b>Reja yangilandi</b>
+
+📂 Kategoriya: <b>${esc(categoryName)}</b>
+💰 Limit: <b>${numFmt(intent.amount)} so'm</b>
+⚠️ Ogohlantirish: <b>${numFmt(intent.alertBefore)} so'm</b>
+📅 Oy: <b>${esc(intent.monthKey)}</b>
+
+Mini App > Reja bo'limida ko'rinadi.`,
       { parse_mode: 'HTML' }
     ).catch(() => null);
     return true;
   }
 
-  let insertRes = await db.from('category_limits').insert([{ user_id: userId, ...payload }]);
-  if (insertRes.error && isMissingColumnError(insertRes.error, nameCol)) {
-    nameCol = alternateCategoryLimitNameColumn(nameCol);
-    categoryLimitNameColumnSupported = nameCol === 'name' ? 'name' : null;
-    const fallbackPayload = { ...payload, [nameCol]: categoryName };
-    delete fallbackPayload.category_name;
-    delete fallbackPayload.name;
-    insertRes = await db.from('category_limits').insert([{ user_id: userId, ...fallbackPayload }]);
-  }
-  if (insertRes.error && isMissingColumnError(insertRes.error, 'month_key')) {
-    const fallbackPayload = { ...payload };
-    delete fallbackPayload.month_key;
-    insertRes = await db.from('category_limits').insert([{ user_id: userId, ...fallbackPayload }]);
-  }
+  const insertRes = await writeCategoryLimit('insert');
   if (insertRes.error) throw insertRes.error;
 
   await bot.sendMessage(chatId,
