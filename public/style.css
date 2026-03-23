@@ -4308,7 +4308,7 @@ body {
     padding: 0 16px 16px;
     display: grid;
     gap: 12px;
-    border-top: 1px solid rgba(255,255,255,.06);
+    border-top: 1px solid rgba(255, 255, 255, .06);
 }
 
 .debt-card.is-overdue {
@@ -4509,16 +4509,65 @@ body {
     .debt-spotlight,
     .debt-panel-head,
     .debt-card-summary-main,
-    .plan-progress-head {
+    .plan-progress-head,
+    .plan-card-summary .route-item-top {
         grid-template-columns: 1fr;
         display: grid;
     }
 
     .debt-card-amount,
-    .plan-progress-head span {
+    .plan-progress-head span,
+    .plan-card-summary-tail {
         text-align: left;
     }
+
+    .plan-card-summary-tail {
+        justify-content: space-between;
+    }
 }
+
+/* ===== v1.2.3 mobile full-screen modals + compact plans ===== */
+.plan-card-collapsible {
+    padding: 0;
+    overflow: hidden;
+}
+
+.plan-card-summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 18px;
+    display: grid;
+    gap: 12px;
+}
+
+.plan-card-summary::-webkit-details-marker {
+    display: none;
+}
+
+.plan-card-summary-tail {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.plan-card-chevron {
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 900;
+    transition: transform .2s ease;
+}
+
+.plan-card-collapsible[open] .plan-card-chevron {
+    transform: rotate(180deg);
+}
+
+.plan-card-details {
+    padding: 0 18px 18px;
+    display: grid;
+    gap: 12px;
+    border-top: 1px solid rgba(255, 255, 255, .06);
+}
+
 /* ===== v1.2.3 mobile full-screen modals + compact plans ===== */
 .plan-progress-head {
     display: flex;
@@ -4545,6 +4594,7 @@ body {
 }
 
 @media (max-width: 720px) {
+
     #ov-plan-form .sheet,
     #ov-export .sheet,
     #ov-debt-form .sheet,

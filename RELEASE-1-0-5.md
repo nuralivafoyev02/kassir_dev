@@ -70,3 +70,10 @@
 - Bot orqali yaratilgan reja yozuvlari Mini App reja ro'yxatida ko'rinishi uchun yuklash/dedupe oqimi mustahkamlandi.
 - Mini App'dagi kirim/chiqim saqlash oqimini to'xtatib qo'yayotgan reja statistikasi xatosi bartaraf etildi.
 - Bot tarafdagi reja saqlash logikasi ham legacy va yangi `category_limits` sxemalari orasida bir xil kalit bilan ishlaydigan qilindi.
+
+
+## Hotfix: Reja kartalari accordion UX
+- Reja kartalari endi yopiq/ochiq accordion ko‘rinishda ishlaydi.
+- Default holatda faqat asosiy ma’lumotlar ko‘rinadi: kategoriya, oy, limit, progress va qolgan summa.
+- Kartani bosganda ichki tafsilotlar ochiladi: sarflangan, qolgan, ogohlantirish, badge va action tugmalar.
+- Reja ro‘yxatida bir ekranga ko‘proq yozuv sig‘ishi uchun details qismi compact qilindi.

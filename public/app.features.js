@@ -1070,34 +1070,41 @@
           : `${fmtMoney(stats.remaining)} qoldi`;
       const percentText = stats.completed ? `100% to'ldi` : `${stats.percent}% to'ldi`;
       return `
-        <div class="route-item plan-route-item ${stats.exceeded ? 'plan-route-item-danger' : ''}">
-          <div class="route-item-top">
-            <div>
-              <div class="route-item-title">${escapeHtml(plan.category_name || '—')}</div>
-              <div class="route-item-sub">${escapeHtml(monthLabel(plan.month_key || monthKey()))}</div>
+        <details class="route-item plan-route-item plan-card-collapsible ${stats.exceeded ? 'plan-route-item-danger' : ''}">
+          <summary class="plan-card-summary">
+            <div class="route-item-top">
+              <div>
+                <div class="route-item-title">${escapeHtml(plan.category_name || '—')}</div>
+                <div class="route-item-sub">${escapeHtml(monthLabel(plan.month_key || monthKey()))}</div>
+              </div>
+              <div class="plan-card-summary-tail">
+                <div class="route-item-amount">${fmtMoney(plan.amount)}</div>
+                <div class="plan-card-chevron">⌄</div>
+              </div>
             </div>
-            <div class="route-item-amount">${fmtMoney(plan.amount)}</div>
+            <div class="plan-progress-head">
+              <strong>${escapeHtml(percentText)}</strong>
+              <span>${escapeHtml(helperText)}</span>
+            </div>
+            <div class="plan-progress"><span style="width:${Math.min(100, stats.percent)}%"></span></div>
+          </summary>
+          <div class="plan-card-details">
+            <div class="plan-stats compact">
+              <div class="plan-stat"><span class="plan-stat-label">Sarflandi</span><span class="plan-stat-value">${fmtMoney(stats.spent)}</span></div>
+              <div class="plan-stat"><span class="plan-stat-label">Qoldi</span><span class="plan-stat-value">${stats.exceeded ? fmtMoney(stats.overBy) : fmtMoney(stats.remaining)}</span></div>
+              <div class="plan-stat"><span class="plan-stat-label">Ogohlantirish</span><span class="plan-stat-value">${fmtMoney(plan.alert_before)}</span></div>
+            </div>
+            <div class="route-badges">
+              <span class="route-badge ${statusClass}">${escapeHtml(statusText)}</span>
+              ${plan.notify_bot ? `<span class="route-badge">Bot</span>` : ''}
+              ${plan.notify_app ? `<span class="route-badge good">App</span>` : ''}
+            </div>
+            <div class="route-actions">
+              <button class="route-action" onclick="event.stopPropagation(); openPlanForm(${plan.id})">✏️ ${currentLang === 'ru' ? 'Изменить' : currentLang === 'en' ? 'Edit' : 'Tahrirlash'}</button>
+              <button class="route-action danger" onclick="event.stopPropagation(); deletePlan(${plan.id})">🗑 ${currentLang === 'ru' ? 'Удалить' : currentLang === 'en' ? 'Delete' : "O'chirish"}</button>
+            </div>
           </div>
-          <div class="plan-progress-head">
-            <strong>${escapeHtml(percentText)}</strong>
-            <span>${escapeHtml(helperText)}</span>
-          </div>
-          <div class="plan-progress"><span style="width:${Math.min(100, stats.percent)}%"></span></div>
-          <div class="plan-stats compact">
-            <div class="plan-stat"><span class="plan-stat-label">Sarflandi</span><span class="plan-stat-value">${fmtMoney(stats.spent)}</span></div>
-            <div class="plan-stat"><span class="plan-stat-label">Qoldi</span><span class="plan-stat-value">${stats.exceeded ? fmtMoney(stats.overBy) : fmtMoney(stats.remaining)}</span></div>
-            <div class="plan-stat"><span class="plan-stat-label">Ogohlantirish</span><span class="plan-stat-value">${fmtMoney(plan.alert_before)}</span></div>
-          </div>
-          <div class="route-badges">
-            <span class="route-badge ${statusClass}">${escapeHtml(statusText)}</span>
-            ${plan.notify_bot ? `<span class="route-badge">Bot</span>` : ''}
-            ${plan.notify_app ? `<span class="route-badge good">App</span>` : ''}
-          </div>
-          <div class="route-actions">
-            <button class="route-action" onclick="openPlanForm(${plan.id})">✏️ ${currentLang === 'ru' ? 'Изменить' : currentLang === 'en' ? 'Edit' : 'Tahrirlash'}</button>
-            <button class="route-action danger" onclick="deletePlan(${plan.id})">🗑 ${currentLang === 'ru' ? 'Удалить' : currentLang === 'en' ? 'Delete' : "O'chirish"}</button>
-          </div>
-        </div>`;
+        </details>`;
     }).join('');
 
     syncPlanAppNotifications();
