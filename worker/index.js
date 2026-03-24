@@ -152,6 +152,92 @@ async function sbFetch(env, path, init = {}) {
   return resp.text();
 }
 
+function sbErrorText(error) {
+  return String(error?.message || error || "");
+}
+
+function sbMissingTable(error, table) {
+  const msg = sbErrorText(error).toLowerCase();
+  const target = String(table || "").toLowerCase();
+  return !!target && msg.includes(target) && (
+    msg.includes("could not find the table") ||
+    msg.includes("relation") ||
+    msg.includes("does not exist")
+  );
+}
+
+function sbMissingColumn(error, column) {
+  const msg = sbErrorText(error).toLowerCase();
+  const target = String(column || "").toLowerCase();
+  return !!target && msg.includes(target) && (
+    msg.includes("could not find the column") ||
+    msg.includes("schema cache") ||
+    msg.includes("does not exist") ||
+    msg.includes("unknown column")
+  );
+}
+
+const TASHKENT_TIME_ZONE = "Asia/Tashkent";
+const TASHKENT_UTC_OFFSET_HOURS = 5;
+
+function getTashkentParts(value = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TASHKENT_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(value));
+
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    year: Number(map.year || 0),
+    month: Number(map.month || 0),
+    day: Number(map.day || 0),
+    hour: Number(map.hour || 0),
+    minute: Number(map.minute || 0),
+    second: Number(map.second || 0),
+  };
+}
+
+function uzDateKey(value = new Date()) {
+  const p = getTashkentParts(value);
+  return `${String(p.year).padStart(4, "0")}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
+}
+
+function uzDayStartUtcIso(value = new Date()) {
+  const p = getTashkentParts(value);
+  return new Date(Date.UTC(p.year, p.month - 1, p.day, -TASHKENT_UTC_OFFSET_HOURS, 0, 0, 0)).toISOString();
+}
+
+function isDailyReminderWindow(value = new Date()) {
+  const p = getTashkentParts(value);
+  return p.hour === 9 && p.minute < 5;
+}
+
+function toUzDateTime(value) {
+  if (!value) return "belgilangan vaqt";
+  try {
+    return new Date(value).toLocaleString("uz-UZ", { timeZone: TASHKENT_TIME_ZONE });
+  } catch {
+    return new Date(value).toLocaleString("uz-UZ");
+  }
+}
+
+function buildDailyReminderText(fullName = "") {
+  const greetingName = String(fullName || "").trim();
+  const safeName = greetingName ? `, <b>${esc(greetingName)}</b>` : "";
+  return `🌤 <b>Assalamu aleykum${safeName}</b>
+
+Bugungi xarajatlarni kiritib borishni unutmang.
+💸 Kirim, chiqim, qarz va rejalaringizni yozsangiz — men ularni tartibli saqlab boraman.
+
+🤝 <i>24/7 xizmatingizda man!</i>`;
+}
+
 async function sbInsertNotificationJob(env, row) {
   return sbFetch(env, `/notification_jobs`, {
     method: "POST",
@@ -239,7 +325,25 @@ function renderNotificationText(job) {
 }
 
 async function processDueNotifications(env, meta = {}) {
-  const dueJobs = await sbGetDueJobs(env, 50);
+  let dueJobs;
+  try {
+    dueJobs = await sbGetDueJobs(env, 50);
+  } catch (error) {
+    if (sbMissingTable(error, "notification_jobs")) {
+      return {
+        ok: true,
+        source: meta.source || "manual",
+        total_due: 0,
+        sent: 0,
+        failed: 0,
+        skipped: 0,
+        errors: [],
+        note: "notification_jobs table missing",
+      };
+    }
+    throw error;
+  }
+
   const result = {
     ok: true,
     source: meta.source || "manual",
@@ -287,6 +391,196 @@ async function processDueNotifications(env, meta = {}) {
   }
 
   return result;
+}
+
+async function fetchUsersForDailyReminder(env, dayStartIso) {
+  const encodedStart = encodeURIComponent(dayStartIso);
+  const encodedOr = encodeURIComponent(`(last_daily_reminder_at.is.null,last_daily_reminder_at.lt.${dayStartIso})`);
+
+  try {
+    return await sbFetch(
+      env,
+      `/users?select=user_id,full_name,daily_reminder_enabled,last_daily_reminder_at&or=${encodedOr}&limit=1000`
+    );
+  } catch (error) {
+    if (sbMissingColumn(error, "daily_reminder_enabled")) {
+      return await sbFetch(
+        env,
+        `/users?select=user_id,full_name,last_daily_reminder_at&or=${encodedOr}&limit=1000`
+      );
+    }
+    if (sbMissingColumn(error, "last_daily_reminder_at")) {
+      return { __migration_required__: "users.last_daily_reminder_at missing", rows: [] };
+    }
+    throw error;
+  }
+}
+
+async function markDailyReminderSent(env, userId, nowIso) {
+  try {
+    await sbFetch(env, `/users?user_id=eq.${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify({ last_daily_reminder_at: nowIso }),
+    });
+  } catch (error) {
+    if (sbMissingColumn(error, "last_daily_reminder_at")) return;
+    throw error;
+  }
+}
+
+async function processDailyReminders(env, now = new Date(), meta = {}) {
+  const result = {
+    checked: 0,
+    sent: 0,
+    failed: [],
+    todayKey: uzDateKey(now),
+    scheduled_for: "09:00 Asia/Tashkent",
+    window_open: isDailyReminderWindow(now),
+  };
+
+  if (!result.window_open) {
+    result.note = "outside daily reminder window";
+    return result;
+  }
+
+  const nowIso = new Date(now).toISOString();
+  const dayStartIso = uzDayStartUtcIso(now);
+
+  let rows;
+  try {
+    rows = await fetchUsersForDailyReminder(env, dayStartIso);
+  } catch (error) {
+    if (sbMissingTable(error, "users")) {
+      result.note = "users table missing";
+      return result;
+    }
+    throw error;
+  }
+
+  if (rows && rows.__migration_required__) {
+    result.note = rows.__migration_required__;
+    return result;
+  }
+
+  const candidates = (Array.isArray(rows) ? rows : rows?.rows || []).filter(
+    (row) => row && toSafeChatId(row.user_id) && row.daily_reminder_enabled !== false
+  );
+
+  result.checked = candidates.length;
+
+  for (const row of candidates) {
+    try {
+      await tgSendMessage(env, row.user_id, buildDailyReminderText(row.full_name));
+      await markDailyReminderSent(env, row.user_id, nowIso);
+      result.sent += 1;
+    } catch (error) {
+      result.failed.push({
+        user_id: row.user_id,
+        error: error?.message || String(error),
+      });
+    }
+  }
+
+  return result;
+}
+
+async function processDebtReminders(env, now = new Date(), meta = {}) {
+  const result = {
+    checked: 0,
+    due: 0,
+    sent: 0,
+    failed: [],
+  };
+
+  let debts;
+  try {
+    debts = await sbFetch(
+      env,
+      `/debts?select=id,user_id,person_name,amount,direction,due_at,remind_at,note,reminder_sent_at,status,created_at&status=eq.open&order=created_at.asc&limit=300`
+    );
+  } catch (error) {
+    if (sbMissingTable(error, "debts")) {
+      result.note = "debts table missing";
+      return result;
+    }
+    throw error;
+  }
+
+  const items = Array.isArray(debts) ? debts : [];
+  result.checked = items.length;
+
+  const dueItems = items.filter((debt) => {
+    if (!debt || debt.status !== "open") return false;
+    if (debt.reminder_sent_at) return false;
+    const target = debt.remind_at || debt.due_at || null;
+    if (!target) return false;
+    const ts = new Date(target).getTime();
+    return Number.isFinite(ts) && ts <= new Date(now).getTime();
+  });
+
+  result.due = dueItems.length;
+
+  for (const debt of dueItems) {
+    const target = debt.remind_at || debt.due_at || null;
+    const targetDate = target ? new Date(target) : null;
+    const dayLabel = targetDate && uzDateKey(targetDate) === uzDateKey(now)
+      ? "Bugun"
+      : "Eslatma";
+    const direction = debt.direction === "payable" ? "Siz qaytarishingiz kerak" : "Sizga qaytishi kerak";
+    const when = targetDate ? toUzDateTime(targetDate) : "belgilangan vaqt";
+    const text = `⏰ <b>Qarz eslatmasi</b>
+
+${dayLabel} <b>${esc(debt.person_name)}</b> bilan bog'liq qarz vaqti yetdi.
+💰 ${numFmt(debt.amount)} so'm
+📌 ${direction}
+🕒 ${when}${debt.note ? `
+📝 ${esc(debt.note)}` : ""}`;
+
+    try {
+      await tgSendMessage(env, debt.user_id, text);
+      await sbFetch(env, `/debts?id=eq.${encodeURIComponent(debt.id)}&user_id=eq.${encodeURIComponent(debt.user_id)}`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify({ reminder_sent_at: new Date(now).toISOString() }),
+      });
+      result.sent += 1;
+    } catch (error) {
+      result.failed.push({
+        id: debt.id,
+        user_id: debt.user_id,
+        error: error?.message || String(error),
+      });
+    }
+  }
+
+  return result;
+}
+
+async function runAllCronJobs(env, meta = {}) {
+  const now = new Date();
+  const [notifications, daily, debts] = await Promise.all([
+    processDueNotifications(env, meta),
+    processDailyReminders(env, now, meta),
+    processDebtReminders(env, now, meta),
+  ]);
+
+  return {
+    ok: true,
+    at: now.toISOString(),
+    source: meta.source || "manual",
+    cron: meta.cron || null,
+    scheduledTime: meta.scheduledTime || null,
+    notifications,
+    daily,
+    debts,
+  };
 }
 
 /* =========================
@@ -664,7 +958,7 @@ async function handleManualCronRun(request, env) {
   }
 
   try {
-    const result = await processDueNotifications(env, { source: "manual" });
+    const result = await runAllCronJobs(env, { source: "manual" });
     return json(result);
   } catch (error) {
     return json(
@@ -747,7 +1041,7 @@ export default {
     ctx.waitUntil(
       (async () => {
         try {
-          const result = await processDueNotifications(env, {
+          const result = await runAllCronJobs(env, {
             source: "scheduled",
             cron: controller?.cron || null,
             scheduledTime: controller?.scheduledTime || null,

@@ -7,7 +7,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const SUPA_URL = process.env.SUPABASE_URL;
 const SUPA_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
 const CRON_SECRET = process.env.CRON_SECRET;
-const UZ_OFFSET_MS = 5 * 60 * 60 * 1000;
+const TASHKENT_TIME_ZONE = 'Asia/Tashkent';
 
 if (!BOT_TOKEN) throw new Error("BOT_TOKEN yo'q");
 if (!SUPA_URL) throw new Error("SUPABASE_URL yo'q");
@@ -18,28 +18,72 @@ const db = createClient(SUPA_URL, SUPA_KEY);
 
 function relationMissing(error, table) {
   const msg = String(error?.message || error?.details || '').toLowerCase();
-  return msg.includes(`table '${table}'`) || msg.includes(`relation \"public.${table}\"`) || msg.includes('does not exist');
+  const target = String(table || '').toLowerCase();
+  return !!target && msg.includes(target) && (
+    msg.includes('could not find the table') ||
+    msg.includes('relation "public.') ||
+    msg.includes('relation "') ||
+    msg.includes('does not exist')
+  );
 }
 
 function missingColumn(error, column) {
   const msg = String(error?.message || error?.details || error?.hint || '').toLowerCase();
   const target = String(column || '').toLowerCase();
-  return !!target && msg.includes(target) && (msg.includes('schema cache') || msg.includes('does not exist') || msg.includes('unknown column') || msg.includes('could not find the column'));
+  return !!target && msg.includes(target) && (
+    msg.includes('schema cache') ||
+    msg.includes('does not exist') ||
+    msg.includes('unknown column') ||
+    msg.includes('could not find the column')
+  );
+}
+
+function getTashkentParts(value = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TASHKENT_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(value));
+
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return {
+    year: Number(map.year || 0),
+    month: Number(map.month || 0),
+    day: Number(map.day || 0),
+    hour: Number(map.hour || 0),
+    minute: Number(map.minute || 0),
+    second: Number(map.second || 0),
+  };
+}
+
+function uzDateKey(value = new Date()) {
+  const p = getTashkentParts(value);
+  return `${String(p.year).padStart(4, '0')}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
+}
+
+function uzDayStartUtcIso(value = new Date()) {
+  const p = getTashkentParts(value);
+  return new Date(Date.UTC(p.year, p.month - 1, p.day, -5, 0, 0, 0)).toISOString();
+}
+
+function isDailyReminderWindow(value = new Date()) {
+  const p = getTashkentParts(value);
+  return p.hour === 9 && p.minute < 5;
 }
 
 function dueTarget(debt) {
   return debt.remind_at || debt.due_at || null;
 }
 
-function uzDateKey(value = Date.now()) {
-  const d = new Date(new Date(value).getTime() + UZ_OFFSET_MS);
-  return d.toISOString().slice(0, 10);
-}
-
 function toUzDateTime(value) {
   if (!value) return 'belgilangan vaqt';
   try {
-    return new Date(value).toLocaleString('uz-UZ', { timeZone: 'Asia/Tashkent' });
+    return new Date(value).toLocaleString('uz-UZ', { timeZone: TASHKENT_TIME_ZONE });
   } catch {
     return new Date(value).toLocaleString('uz-UZ');
   }
@@ -56,26 +100,23 @@ Bugungi xarajatlarni kiritib borishni unutmang.
 🤝 <i>24/7 xizmatingizda man!</i>`;
 }
 
-async function fetchUsersForDailyReminder(todayKey) {
+async function fetchUsersForDailyReminder(dayStartIso) {
   let res = await db
     .from('users')
     .select('user_id, full_name, daily_reminder_enabled, last_daily_reminder_at')
-    .or(`last_daily_reminder_at.is.null,last_daily_reminder_at.lt.${todayKey}T00:00:00.000Z`)
+    .or(`last_daily_reminder_at.is.null,last_daily_reminder_at.lt.${dayStartIso}`)
     .limit(1000);
 
   if (res.error && missingColumn(res.error, 'daily_reminder_enabled')) {
     res = await db
       .from('users')
       .select('user_id, full_name, last_daily_reminder_at')
-      .or(`last_daily_reminder_at.is.null,last_daily_reminder_at.lt.${todayKey}T00:00:00.000Z`)
+      .or(`last_daily_reminder_at.is.null,last_daily_reminder_at.lt.${dayStartIso}`)
       .limit(1000);
   }
 
   if (res.error && missingColumn(res.error, 'last_daily_reminder_at')) {
-    res = await db
-      .from('users')
-      .select('user_id, full_name')
-      .limit(1000);
+    return { data: [], error: null, skipped: 'users.last_daily_reminder_at missing' };
   }
 
   return res;
@@ -89,46 +130,66 @@ async function markDailyReminderSent(userId, nowIso) {
   return result;
 }
 
-async function processDailyReminders(nowIso) {
-  const todayKey = uzDateKey(nowIso);
-  const { data, error } = await fetchUsersForDailyReminder(todayKey);
+async function processDailyReminders(now) {
+  const result = {
+    checked: 0,
+    sent: 0,
+    failed: [],
+    todayKey: uzDateKey(now),
+    scheduled_for: '09:00 Asia/Tashkent',
+    window_open: isDailyReminderWindow(now),
+  };
+
+  if (!result.window_open) {
+    result.note = 'outside daily reminder window';
+    return result;
+  }
+
+  const nowIso = now.toISOString();
+  const dayStartIso = uzDayStartUtcIso(now);
+  const { data, error, skipped } = await fetchUsersForDailyReminder(dayStartIso);
+
+  if (skipped) {
+    result.note = skipped;
+    return result;
+  }
 
   if (error) {
     if (relationMissing(error, 'users')) {
-      return { checked: 0, sent: 0, failed: [], skipped: 'users table missing' };
+      result.note = 'users table missing';
+      return result;
     }
     throw error;
   }
 
   const rows = (data || []).filter((row) => row && row.user_id && row.daily_reminder_enabled !== false);
-  let sent = 0;
-  const failed = [];
+  result.checked = rows.length;
 
   for (const row of rows) {
     try {
       await bot.sendMessage(row.user_id, buildDailyReminderText(row.full_name), { parse_mode: 'HTML' });
       await markDailyReminderSent(row.user_id, nowIso);
-      sent += 1;
+      result.sent += 1;
     } catch (err) {
-      failed.push({ user_id: row.user_id, error: err?.message || 'send failed' });
+      result.failed.push({ user_id: row.user_id, error: err?.message || 'send failed' });
     }
   }
 
-  return { checked: rows.length, sent, failed, todayKey };
+  return result;
 }
 
 async function processDebtReminders(now) {
   const nowIso = now.toISOString();
   const { data, error } = await db
     .from('debts')
-    .select('id, user_id, person_name, amount, direction, due_at, remind_at, note, reminder_sent_at, status')
+    .select('id, user_id, person_name, amount, direction, due_at, remind_at, note, reminder_sent_at, status, created_at')
     .eq('status', 'open')
     .order('created_at', { ascending: true })
     .limit(300);
 
   if (error) {
     if (relationMissing(error, 'debts')) {
-      return { checked: 0, due: 0, sent: 0, failed: [], skipped: 'debts table missing' };
+      return { checked: 0, due: 0, sent: 0, failed: [], note: 'debts table missing' };
     }
     throw error;
   }
@@ -181,15 +242,14 @@ module.exports = async (req, res) => {
     }
 
     const now = new Date();
-    const nowIso = now.toISOString();
     const [daily, debts] = await Promise.all([
-      processDailyReminders(nowIso),
+      processDailyReminders(now),
       processDebtReminders(now),
     ]);
 
     return res.status(200).json({
       ok: true,
-      at: nowIso,
+      at: now.toISOString(),
       daily,
       debts,
     });
