@@ -439,11 +439,13 @@ const NOTIFICATION_SETTING_ORDER = ['daily_reminder', 'daily_report', 'debt_remi
 
 function normalizeNotifTime(value, fallback = '09:00') {
   const raw = String(value || '').trim();
-  const match = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!raw) return fallback;
+  const match = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/) || raw.match(/(?:T|\s)(\d{1,2}):(\d{2})(?::(\d{2}))?/);
   if (!match) return fallback;
   const hh = Number(match[1]);
   const mm = Number(match[2]);
-  if (!Number.isInteger(hh) || !Number.isInteger(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return fallback;
+  const ss = match[3] == null ? 0 : Number(match[3]);
+  if (!Number.isInteger(hh) || !Number.isInteger(mm) || !Number.isInteger(ss) || hh < 0 || hh > 23 || mm < 0 || mm > 59 || ss < 0 || ss > 59) return fallback;
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 }
 
@@ -513,7 +515,14 @@ async function listNotificationSettings() {
       .order('key', { ascending: true });
     if (error) throw error;
     const rows = Array.isArray(data) ? data : [];
-    return NOTIFICATION_SETTING_ORDER.map((key) => mergeNotificationSetting(rows.find((row) => row.key === key) || key));
+    const latestByKey = new Map();
+    rows.forEach((row) => {
+      const prev = latestByKey.get(row.key);
+      const prevTs = new Date(prev?.updated_at || prev?.last_sent_at || 0).getTime() || 0;
+      const nextTs = new Date(row?.updated_at || row?.last_sent_at || 0).getTime() || 0;
+      if (!prev || nextTs >= prevTs) latestByKey.set(row.key, row);
+    });
+    return NOTIFICATION_SETTING_ORDER.map((key) => mergeNotificationSetting(latestByKey.get(key) || key));
   } catch (error) {
     if (isMissingTableError(error, 'notification_settings')) {
       const e = new Error('notification_settings jadvali topilmadi. Supabase SQL migratsiyasini ishga tushiring.');
@@ -545,7 +554,7 @@ async function saveNotificationSetting(key, patch = {}) {
     };
     const { data, error } = await db.from('notification_settings').upsert(payload, { onConflict: 'key' }).select().single();
     if (error) throw error;
-    return mergeNotificationSetting(data || key);
+    return await getNotificationSetting(merged.key) || mergeNotificationSetting(data || key);
   } catch (error) {
     if (isMissingTableError(error, 'notification_settings')) {
       const e = new Error('notification_settings jadvali topilmadi. Avval yangi SQL migratsiyani ishlating.');

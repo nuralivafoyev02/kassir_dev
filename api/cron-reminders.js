@@ -99,11 +99,13 @@ function getCronRequestSecret(req) {
 
 function normalizeNotifTime(value, fallback = '09:00') {
   const raw = String(value || '').trim();
-  const match = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!raw) return fallback;
+  const match = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/) || raw.match(/(?:T|\s)(\d{1,2}):(\d{2})(?::(\d{2}))?/);
   if (!match) return fallback;
   const hh = Number(match[1]);
   const mm = Number(match[2]);
-  if (!Number.isInteger(hh) || !Number.isInteger(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return fallback;
+  const ss = match[3] == null ? 0 : Number(match[3]);
+  if (!Number.isInteger(hh) || !Number.isInteger(mm) || !Number.isInteger(ss) || hh < 0 || hh > 23 || mm < 0 || mm > 59 || ss < 0 || ss > 59) return fallback;
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 }
 
@@ -137,14 +139,21 @@ function mergeNotificationSetting(rowOrKey, patch = null) {
 }
 
 async function getNotificationSettings() {
-  const { data, error } = await db.from('notification_settings').select('key,title,enabled,send_time,timezone,message_template,config,last_sent_at');
+  const { data, error } = await db.from('notification_settings').select('key,title,enabled,send_time,timezone,message_template,config,last_sent_at,updated_at');
   if (error) {
     if (relationMissing(error, 'notification_settings')) {
       return Object.fromEntries(Object.keys(NOTIFICATION_DEFAULTS).map((key) => [key, mergeNotificationSetting(key)]));
     }
     throw error;
   }
-  return Object.fromEntries(Object.keys(NOTIFICATION_DEFAULTS).map((key) => [key, mergeNotificationSetting((data || []).find((row) => row.key === key) || key)]));
+  const latestByKey = new Map();
+  (data || []).forEach((row) => {
+    const prev = latestByKey.get(row.key);
+    const prevTs = new Date(prev?.updated_at || prev?.last_sent_at || 0).getTime() || 0;
+    const nextTs = new Date(row?.updated_at || row?.last_sent_at || 0).getTime() || 0;
+    if (!prev || nextTs >= prevTs) latestByKey.set(row.key, row);
+  });
+  return Object.fromEntries(Object.keys(NOTIFICATION_DEFAULTS).map((key) => [key, mergeNotificationSetting(latestByKey.get(key) || key)]));
 }
 
 async function touchNotificationSetting(key, payload = {}) {

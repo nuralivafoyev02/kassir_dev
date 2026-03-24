@@ -263,12 +263,31 @@ function mergeNotificationSetting(rowOrKey, patch = null) {
   };
 }
 
+function normalizeNotifTime(value, fallback = "09:00") {
+  const raw = String(value || "").trim();
+  if (!raw) return fallback;
+  const match = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/) || raw.match(/(?:T|\s)(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) return fallback;
+  const hh = Number(match[1]);
+  const mm = Number(match[2]);
+  const ss = match[3] == null ? 0 : Number(match[3]);
+  if (!Number.isInteger(hh) || !Number.isInteger(mm) || !Number.isInteger(ss) || hh < 0 || hh > 23 || mm < 0 || mm > 59 || ss < 0 || ss > 59) return fallback;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
 async function sbGetNotificationSettings(env) {
   try {
-    const rows = await sbFetch(env, `/notification_settings?select=key,title,enabled,send_time,timezone,message_template,config,last_sent_at`);
+    const rows = await sbFetch(env, `/notification_settings?select=key,title,enabled,send_time,timezone,message_template,config,last_sent_at,updated_at`);
     const list = Array.isArray(rows) ? rows : [];
+    const latestByKey = new Map();
+    list.forEach((row) => {
+      const prev = latestByKey.get(row.key);
+      const prevTs = new Date(prev?.updated_at || prev?.last_sent_at || 0).getTime() || 0;
+      const nextTs = new Date(row?.updated_at || row?.last_sent_at || 0).getTime() || 0;
+      if (!prev || nextTs >= prevTs) latestByKey.set(row.key, row);
+    });
     return Object.fromEntries(
-      Object.keys(NOTIFICATION_DEFAULTS).map((key) => [key, mergeNotificationSetting(list.find((row) => row.key === key) || key)])
+      Object.keys(NOTIFICATION_DEFAULTS).map((key) => [key, mergeNotificationSetting(latestByKey.get(key) || key)])
     );
   } catch (error) {
     if (sbMissingTable(error, "notification_settings")) {
@@ -1603,6 +1622,38 @@ async function handleManualCronRun(request, env) {
   }
 }
 
+function requestWantsHtml(request) {
+  const accept = request.headers.get("accept") || "";
+  return request.method === "GET" && accept.includes("text/html");
+}
+
+async function serveAppAsset(request, env) {
+  const assetHandler = env?.ASSETS;
+  const wantsHtml = requestWantsHtml(request);
+
+  if (assetHandler?.fetch) {
+    const assetResponse = await assetHandler.fetch(request);
+    if (!wantsHtml || assetResponse.status !== 404) {
+      return assetResponse;
+    }
+
+    const indexUrl = new URL("/index.html", request.url);
+    return assetHandler.fetch(new Request(indexUrl.toString(), request));
+  }
+
+  if (wantsHtml) {
+    const url = new URL(request.url);
+    if (url.pathname !== "/index.html") {
+      const redirectUrl = new URL("/index.html", request.url);
+      const route = `${url.pathname}${url.search || ""}`;
+      redirectUrl.searchParams.set("__kassa_route", route);
+      return Response.redirect(redirectUrl.toString(), 302);
+    }
+  }
+
+  throw new Error("ASSETS binding mavjud emas");
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -1665,7 +1716,7 @@ export default {
         return new Response(null, { status: 204 });
       }
 
-      return env.ASSETS.fetch(request);
+      return serveAppAsset(request, env);
     } catch (error) {
       console.error("[worker.fetch] unhandled", error);
       return json(

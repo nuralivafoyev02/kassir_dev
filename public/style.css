@@ -2155,19 +2155,23 @@ body.light .sh-close:hover {
 #ov-settings.ov {
     align-items: stretch;
     justify-content: flex-start;
-    padding: 0;
+    padding: var(--overlay-top-reserve) 0 var(--overlay-bottom-reserve);
 }
 
 #ov-settings .stg-sheet {
     width: 100%;
     max-width: none;
-    min-height: calc(var(--app-height) - var(--overlay-bottom-reserve));
+    min-height: calc(var(--app-height) - var(--overlay-top-reserve) - var(--overlay-bottom-reserve));
     max-height: none;
-    height: calc(var(--app-height) - var(--overlay-bottom-reserve));
+    height: calc(var(--app-height) - var(--overlay-top-reserve) - var(--overlay-bottom-reserve));
     margin: 0;
-    padding-top: calc(12px + var(--app-top-reserve));
+    padding-top: 12px;
     padding-bottom: calc(40px + var(--app-bottom-reserve));
     box-shadow: none;
+}
+
+#ov-settings .sh-close {
+    top: 16px;
 }
 
 .stg-sheet {
@@ -4624,7 +4628,7 @@ body {
     #ov-export.ov.center,
     #ov-debt-form.ov.center {
         align-items: flex-end;
-        padding: 0;
+        padding: calc(8px + var(--overlay-top-reserve)) 0 var(--overlay-bottom-reserve);
     }
 
     #ov-export .sheet.c,
