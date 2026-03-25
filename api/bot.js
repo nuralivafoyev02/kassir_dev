@@ -2253,21 +2253,33 @@ module.exports = async (req, res) => {
       ).catch(() => { });
 
       if (shouldNotifyNewRegistration) {
-        const successPayload = {
-          source: 'bot start/register',
-          registered_at: iso(),
-          phone_number: msg.contact.phone_number,
-        };
+        const timestamp = new Date().toISOString();
+        const userContext = buildUserLogContext(msg, null, { phone_number: msg.contact.phone_number });
+
+        // SUCCESS log to channel
         await getAppLogger().success({
-          scope: 'register',
+          scope: 'user-registered',
           ...userContext,
-          message: "Yangi foydalanuvchi muvaffaqiyatli ro'yxatdan o'tdi",
-          payload: successPayload,
+          message: "✅ Yangi foydalanuvchi muvaffaqiyatli ro'yxatdan o'tdi",
+          payload: {
+            event: 'new_user_registered',
+            timestamp,
+            phone_number: msg.contact.phone_number,
+            chat_id: chatId,
+            registered: true,
+          },
         }).catch(() => { });
+
+        // Admin notification - new user
         await getAppLogger().notifyNewUser({
-          source: 'bot start/register',
+          source: 'bot /start + contact',
           ...userContext,
-          payload: successPayload,
+          payload: {
+            registered_at: timestamp,
+            phone_number: msg.contact.phone_number,
+            chat_id: chatId,
+            is_new_user: true,
+          },
         }).catch(() => { });
       }
 
@@ -2521,17 +2533,25 @@ module.exports = async (req, res) => {
     // ── Yangi foydalanuvchi — telefon so'rash ──
     if (!user) {
       if (text === '/start') {
-        await getAppLogger().success({
+        const userContext = buildUserLogContext(msg, null);
+        const timestamp = new Date().toISOString();
+
+        // INFO log to channel - yangi user /start bosdi
+        await getAppLogger().info({
           scope: 'start-new-user',
-          ...buildUserLogContext(msg, null),
-          message: "Yangi foydalanuvchiga /start bo'yicha telefon so'rovi yuborildi",
+          ...userContext,
+          message: "🆕 Yangi foydalanuvchi /start bosdi (ro'yxatdan o'tmagan)",
           payload: {
-            source: 'bot /start',
-            registered: false,
+            event: 'new_user_start',
+            timestamp,
+            chat_id: chatId,
+            has_username: !!msg.from?.username,
+            full_name: `${msg.from?.first_name || ''} ${msg.from?.last_name || ''}`.trim(),
             contact_requested: true,
           },
         }).catch(() => { });
       }
+
       await bot.sendMessage(chatId, `👋 Assalomu alaykum!\nBotdan foydalanish uchun telefon raqamingizni tasdiqlang.`, {
         reply_markup: {
           keyboard: [[{ text: '📱 Telefon raqamni yuborish', request_contact: true }]],
@@ -2549,6 +2569,7 @@ module.exports = async (req, res) => {
       const todayStr = now.toDateString();
       const lastStr = user.last_start_date ? new Date(user.last_start_date).toDateString() : null;
       const isNew = lastStr !== todayStr;
+      const isFirstTime = !user.last_start_date;
 
       const firstName = (user.full_name || 'Boshliq').split(' ')[0];
       const greeting = `Xush kelibsiz, <b>${esc(firstName)}</b>☺️!\nBemalol kirim yoki chiqim qilishingiz mumkin💸`;
@@ -2558,16 +2579,27 @@ module.exports = async (req, res) => {
       if (isNew) {
         await db.from('users').update({ last_start_date: iso() }).eq('user_id', userId);
       }
-      await getAppLogger().success({
-        scope: 'start',
-        ...buildUserLogContext(msg, user),
-        message: "Foydalanuvchi /start bosdi",
+
+      // INFO log to channel
+      const userContext = buildUserLogContext(msg, user);
+      await getAppLogger().info({
+        scope: 'start-existing-user',
+        ...userContext,
+        message: isFirstTime
+          ? "🔄 Mavjud foydalanuvchi /start bosdi (birinchi marta)"
+          : isNew
+            ? "📅 Foydalanuvchi bugun birinchi marta /start bosdi"
+            : "👋 Foydalanuvchi /start bosdi (qayta)",
         payload: {
-          source: 'bot /start',
-          first_start_today: isNew,
-          registered: true,
+          event: 'existing_user_start',
+          timestamp: now.toISOString(),
+          is_first_time: isFirstTime,
+          is_first_today: isNew,
+          chat_id: chatId,
+          has_phone: hasRegisteredPhone(user),
         },
       }).catch(() => { });
+
       return res.status(200).json({ ok: true });
     }
 

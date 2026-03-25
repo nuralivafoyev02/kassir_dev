@@ -1,8 +1,6 @@
 import telegramOpsPkg from "../lib/telegram-ops.cjs";
 import {
   buildPublicNotificationConfig,
-  hasFcmPublicConfig,
-  hasFcmServerConfig,
 } from "../types/notifications.mjs";
 import {
   deactivatePushDeviceRegistration,
@@ -1410,16 +1408,7 @@ function seedLegacyProcessEnv(env) {
     "ADMIN_NOTIFY_CHAT_ID",
     "CLIENT_CONSOLE_LOGS_ENABLED",
     "NOTIFICATION_PROVIDER",
-    "FIREBASE_PROJECT_ID",
-    "FIREBASE_CLIENT_EMAIL",
-    "FIREBASE_PRIVATE_KEY",
-    "FIREBASE_WEB_API_KEY",
-    "FIREBASE_APP_ID",
-    "FIREBASE_MESSAGING_SENDER_ID",
-    "FIREBASE_AUTH_DOMAIN",
-    "FIREBASE_VAPID_KEY",
-    "VAPID_KEY",
-  ];
+];
 
   for (const key of keys) {
     const value = env?.[key];
@@ -1605,9 +1594,9 @@ async function handleHealth(env) {
     has_supabase_service_key: !!env.SUPABASE_SERVICE_ROLE_KEY,
     has_cron_secret: !!env.CRON_SECRET,
     notification_provider: buildPublicNotificationConfig(env).NOTIFICATION_PROVIDER,
-    has_fcm_public_config: hasFcmPublicConfig(env),
-    has_fcm_server_config: hasFcmServerConfig(env),
+    push_notifications_enabled: false,
     compatibility: "cloudflare-worker",
+    version: "2.0.0-firebase-removed",
   });
 }
 
