@@ -13,6 +13,7 @@ Keyingi yangilanishda `LOG_LEVEL` ko'p qiymatli formatni ham qabul qiladigan bo'
 4. Yangi user ro'yxatdan o'tganda admin avtomatik xabardor bo'lmas edi.
 5. Error payload ichida maxfiy qiymatlar logga tushib ketish xavfi bor edi.
 6. Worker ichidagi legacy bot handler logging env'larini to'liq olmayotgani uchun kanal loglari amalda chiqmay qolishi mumkin edi.
+7. Logger jim yiqilayotgan holatlarda Telegram API'ning aniq javobini olish uchun alohida diagnostika endpointi yo'q edi.
 
 ## Root cause
 
@@ -21,6 +22,7 @@ Keyingi yangilanishda `LOG_LEVEL` ko'p qiymatli formatni ham qabul qiladigan bo'
 - Telegram kanalga yuboriladigan loglar uchun formatlash, sanitize, chunklash va fallback qoidalari markazlashmagan edi.
 - Register oqimida "haqiqiy yangi user" va "eski user qayta kontakt yubordi" holatlari alohida notify qoidasi bilan ajratilmagan edi.
 - Worker `seedLegacyProcessEnv()` ichida `LOG_CHANNEL_ID`, `TELEGRAM_LOGGING_ENABLED`, `LOG_LEVEL`, `LOCAL_LOG_LEVEL`, `ADMIN_NOTIFY_CHAT_ID` kabi logging env'lari uzatilmayotgan edi.
+- Telegram kanalga yozish bo'yicha runtime diagnostika yo'qligi sabab `chat not found`, `forbidden`, `not enough rights` kabi xatolarni tez ajratish qiyin edi.
 
 ## O'zgargan fayllar
 
@@ -84,6 +86,7 @@ Keyingi yangilanishda `LOG_LEVEL` ko'p qiymatli formatni ham qabul qiladigan bo'
   - yuborish bo'lsa `SUCCESS`
   - no-op bo'lsa faqat minimal local log
 - Legacy bot handler uchun logging env bridge to'liq qilindi, shuning uchun worker secret/vars endi `api/bot.js` ichida ham ko'rinadi.
+- `/api/logging/test` endpointi qo'shildi. U auth bilan himoyalangan va Telegram kanalga to'g'ridan-to'g'ri test xabar yuborib, real natijani JSON ko'rinishida qaytaradi.
 
 ## Yangi env tavsiyalari
 
@@ -95,7 +98,7 @@ Keyingi yangilanishda `LOG_LEVEL` ko'p qiymatli formatni ham qabul qiladigan bo'
 - `ADMIN_NOTIFY_CHAT_ID=<admin chat id>`
 - `CLIENT_CONSOLE_LOGS_ENABLED=false`
 npx wrangler secret put CLIENT_CONSOLE_LOGS_ENABLED
-
+npx wrangler secret put LOG_LEVEL
 
 ## Log format
 

@@ -84,24 +84,31 @@ Qarz berilganda balans darhol o'zgarmaydi. Qarz qaytganda yoki qaytarganingizda 
 
 const DEFAULT_RATE = 12200;
 const ADMIN_IDS = new Set((process.env.ADMIN_IDS || '').split(',').map(v => v.trim()).filter(Boolean));
-const ADMIN_NOTIFY_CHAT_ID = String(process.env.ADMIN_NOTIFY_CHAT_ID || process.env.OWNER_ID || [...ADMIN_IDS][0] || '').trim();
 
 // ─── LOGGING ─────────────────────────────────────────────
-const appLogger = createTelegramOps({
-  botToken: BOT_TOKEN,
-  logChannelId: process.env.LOG_CHANNEL_ID,
-  adminChatId: ADMIN_NOTIFY_CHAT_ID,
-  loggingEnabled: process.env.TELEGRAM_LOGGING_ENABLED,
-  logLevel: process.env.LOG_LEVEL,
-  localLevel: process.env.LOCAL_LOG_LEVEL || 'ERROR',
-  source: 'BOT',
-});
-const log = (scope, data) => appLogger.local('INFO', scope, data);
-const warn = (scope, data) => appLogger.local('SUCCESS', scope, data);
+function getAdminNotifyChatId() {
+  return String(process.env.ADMIN_NOTIFY_CHAT_ID || process.env.OWNER_ID || [...ADMIN_IDS][0] || '').trim();
+}
+
+function getAppLogger() {
+  return createTelegramOps({
+    botToken: process.env.BOT_TOKEN || BOT_TOKEN,
+    logChannelId: process.env.LOG_CHANNEL_ID,
+    adminChatId: getAdminNotifyChatId(),
+    loggingEnabled: process.env.TELEGRAM_LOGGING_ENABLED,
+    logLevel: process.env.LOG_LEVEL,
+    localLevel: process.env.LOCAL_LOG_LEVEL || 'ERROR',
+    source: 'BOT',
+  });
+}
+
+const log = (scope, data) => getAppLogger().local('INFO', scope, data);
+const warn = (scope, data) => getAppLogger().local('SUCCESS', scope, data);
 const logErr = (scope, e, extra = {}) => {
   const payload = { error: e, ...extra };
-  appLogger.local('ERROR', scope, payload);
-  void appLogger.error({
+  const logger = getAppLogger();
+  logger.local('ERROR', scope, payload);
+  void logger.error({
     scope,
     user_id: extra.userId || extra.user_id || null,
     chat_id: extra.chatId || extra.chat_id || null,
@@ -2192,13 +2199,13 @@ module.exports = async (req, res) => {
           registered_at: iso(),
           phone_number: msg.contact.phone_number,
         };
-        await appLogger.success({
+        await getAppLogger().success({
           scope: 'register',
           ...userContext,
           message: "Yangi foydalanuvchi muvaffaqiyatli ro'yxatdan o'tdi",
           payload: successPayload,
         }).catch(() => { });
-        await appLogger.notifyNewUser({
+        await getAppLogger().notifyNewUser({
           source: 'bot start/register',
           ...userContext,
           payload: successPayload,
@@ -2217,7 +2224,7 @@ module.exports = async (req, res) => {
 
       try {
         await sendAdminPanel(chatId);
-        void appLogger.info({
+        void getAppLogger().info({
           scope: 'admin-open',
           ...buildUserLogContext(msg, user),
           message: 'Admin panel ochildi',
@@ -2243,7 +2250,7 @@ module.exports = async (req, res) => {
       try {
         if (!sub || sub === 'list') {
           await sendNotificationPanel(chatId);
-          void appLogger.info({
+          void getAppLogger().info({
             scope: 'notif-panel',
             ...buildUserLogContext(msg, user),
             message: 'Notification panel ochildi',
@@ -2254,7 +2261,7 @@ module.exports = async (req, res) => {
 
         if (sub === 'help') {
           await bot.sendMessage(chatId, buildNotificationHelpText(), { parse_mode: 'HTML' }).catch(() => { });
-          void appLogger.info({
+          void getAppLogger().info({
             scope: 'notif-help',
             ...buildUserLogContext(msg, user),
             message: "Notification qo'llanmasi ochildi",
@@ -2271,7 +2278,7 @@ module.exports = async (req, res) => {
           }
           const saved = await saveNotificationSetting(key, { enabled: sub === 'on' });
           await bot.sendMessage(chatId, `✅ ${saved.title} holati: <b>${saved.enabled ? 'yoqildi' : "o'chirildi"}</b>`, { parse_mode: 'HTML' }).catch(() => { });
-          void appLogger.info({
+          void getAppLogger().info({
             scope: 'notif-toggle',
             ...buildUserLogContext(msg, user),
             message: 'Notification holati yangilandi',
@@ -2294,7 +2301,7 @@ module.exports = async (req, res) => {
           }
           const saved = await saveNotificationSetting(key, { send_time: normalized });
           await bot.sendMessage(chatId, `✅ ${saved.title} vaqti <b>${saved.send_time}</b> qilib saqlandi.`, { parse_mode: 'HTML' }).catch(() => { });
-          void appLogger.info({
+          void getAppLogger().info({
             scope: 'notif-time',
             ...buildUserLogContext(msg, user),
             message: 'Notification vaqti yangilandi',
@@ -2318,7 +2325,7 @@ module.exports = async (req, res) => {
             config: base.config || {}
           });
           await bot.sendMessage(chatId, `♻️ ${saved.title} default holatiga qaytarildi.`, { parse_mode: 'HTML' }).catch(() => { });
-          void appLogger.info({
+          void getAppLogger().info({
             scope: 'notif-reset',
             ...buildUserLogContext(msg, user),
             message: 'Notification default holatiga qaytarildi',
@@ -2334,7 +2341,7 @@ module.exports = async (req, res) => {
             return res.status(200).json({ ok: true });
           }
           await sendNotificationPreview(chatId, key);
-          void appLogger.info({
+          void getAppLogger().info({
             scope: 'notif-test',
             ...buildUserLogContext(msg, user),
             message: 'Notification preview yuborildi',
@@ -2357,7 +2364,7 @@ module.exports = async (req, res) => {
           }
           const saved = await saveNotificationSetting(key, { message_template: template });
           await bot.sendMessage(chatId, `✅ ${saved.title} matni yangilandi.\n\n<i>Test uchun /notif test ${key}</i>`, { parse_mode: 'HTML' }).catch(() => { });
-          void appLogger.info({
+          void getAppLogger().info({
             scope: 'notif-text',
             ...buildUserLogContext(msg, user),
             message: 'Notification matni yangilandi',
@@ -2455,7 +2462,7 @@ module.exports = async (req, res) => {
     // ── Yangi foydalanuvchi — telefon so'rash ──
     if (!user) {
       if (text === '/start') {
-        void appLogger.success({
+        void getAppLogger().success({
           scope: 'start-new-user',
           ...buildUserLogContext(msg, null),
           message: "Yangi foydalanuvchiga /start bo'yicha telefon so'rovi yuborildi",
@@ -2492,7 +2499,7 @@ module.exports = async (req, res) => {
       if (isNew) {
         await db.from('users').update({ last_start_date: iso() }).eq('user_id', userId);
       }
-      void appLogger.success({
+      void getAppLogger().success({
         scope: 'start',
         ...buildUserLogContext(msg, user),
         message: "Foydalanuvchi /start bosdi",

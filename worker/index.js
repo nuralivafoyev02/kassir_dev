@@ -1671,6 +1671,72 @@ async function handleTestNotification(request, env) {
   }
 }
 
+async function handleLoggingTest(request, env) {
+  if (request.method !== "POST") {
+    return json({ ok: false, error: "Method not allowed" }, 405);
+  }
+
+  if (!isAuthorizedCronRequest(request, env)) {
+    return json({ ok: false, error: "Unauthorized" }, 401);
+  }
+
+  const body = await safeJson(request);
+  const logger = getWorkerLogger(env);
+  const channelId = String(env?.LOG_CHANNEL_ID || "").trim();
+  const payload = {
+    requested_at: isoNow(),
+    log_level: String(env?.LOG_LEVEL || ""),
+    logging_enabled: String(env?.TELEGRAM_LOGGING_ENABLED || ""),
+    channel_id: channelId || null,
+    source: body.source || "manual-logging-test",
+  };
+
+  try {
+    const sent = await tgSendMessage(
+      env,
+      channelId,
+      `<b>[INFO]</b>\n<b>source:</b> WORKER\n<b>scope:</b> logging-test\n<b>user_id:</b> <code>unknown</code>\n<b>user_name:</b> manual-test\n\n<b>info tafsilotlari:</b>\n<pre>${esc(JSON.stringify(payload, null, 2))}</pre>`
+    );
+
+    await logger.info({
+      scope: "logging-test",
+      message: "Worker logging test muvaffaqiyatli yuborildi",
+      payload,
+    }).catch(() => {});
+
+    return json({
+      ok: true,
+      direct_message_id: sent?.result?.message_id || null,
+      config: {
+        has_bot_token: !!env?.BOT_TOKEN,
+        has_log_channel_id: !!channelId,
+        logging_enabled: String(env?.TELEGRAM_LOGGING_ENABLED || ""),
+        log_level: String(env?.LOG_LEVEL || ""),
+      },
+    });
+  } catch (error) {
+    await logger.error({
+      scope: "logging-test",
+      message: error?.message || String(error),
+      payload: { error, ...payload },
+    }).catch(() => {});
+
+    return json(
+      {
+        ok: false,
+        error: error?.message || String(error),
+        config: {
+          has_bot_token: !!env?.BOT_TOKEN,
+          has_log_channel_id: !!channelId,
+          logging_enabled: String(env?.TELEGRAM_LOGGING_ENABLED || ""),
+          log_level: String(env?.LOG_LEVEL || ""),
+        },
+      },
+      500
+    );
+  }
+}
+
 async function handleManualCronRun(request, env) {
   if (request.method !== "POST") {
     return json({ ok: false, error: "Method not allowed" }, 405);
@@ -1806,6 +1872,10 @@ export default {
 
       if (url.pathname === "/api/notifications/test") {
         return handleTestNotification(request, env);
+      }
+
+      if (url.pathname === "/api/logging/test") {
+        return handleLoggingTest(request, env);
       }
 
       // Manual cron trigger
