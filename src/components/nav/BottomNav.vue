@@ -10,12 +10,12 @@
       <span data-i18n="nav_home">Bosh</span>
     </button>
 
-    <button :class="['nb', 'nb-compact', { active: activeTab === 'debt' }]" id="nb-debt" onclick="goTab('debt')">
+    <button :class="['nb', 'nb-compact', { active: activeTab === 'debt' || activeTab === 'plan' }]" id="nb-finance" onclick="openFinanceSection()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
         <path d="M12 1v22" />
         <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7H14.5a3.5 3.5 0 0 1 0 7H6" />
       </svg>
-      <span data-i18n="nav_debts">Qarzlar</span>
+      <span data-i18n="nav_finance">Reja/Qarz</span>
     </button>
 
     <button :class="['nb', 'nb-add-main', { active: activeTab === 'add' }]" id="nb-add" onclick="goTab('add')">
@@ -28,22 +28,20 @@
       <p class="add-btn-txt add-btn-txt-five" data-i18n="nav_add">Qo'shish</p>
     </button>
 
-    <button :class="['nb', 'nb-compact', { active: activeTab === 'plan' }]" id="nb-plan" onclick="goTab('plan')">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M4 19h16" />
-        <path d="M7 16V8" />
-        <path d="M12 16V5" />
-        <path d="M17 16v-4" />
-      </svg>
-      <span data-i18n="nav_plan">Reja</span>
-    </button>
-
     <button :class="['nb', 'nb-compact', { active: activeTab === 'hist' }]" id="nb-hist" onclick="goTab('hist')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="10" />
         <polyline points="12 6 12 12 16 14" />
       </svg>
       <span data-i18n="nav_history">Tarix</span>
+    </button>
+
+    <button :class="['nb', 'nb-compact', { active: activeTab === 'profile' }]" id="nb-profile" onclick="goTab('profile')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+        <circle cx="12" cy="7" r="4" />
+      </svg>
+      <span data-i18n="nav_profile">Profil</span>
     </button>
   </nav>
 </template>

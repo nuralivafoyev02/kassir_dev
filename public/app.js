@@ -240,6 +240,7 @@ let userSubscriptionColumnsSupported = null;
 let userNotificationColumnsSupported = null;
 let currentPaywallFeatureKey = null;
 let currentPaywallSource = 'settings';
+let lastFinanceTab = 'debt';
 let subscriptionState = {
   schemaReady: false,
   rawUser: null,
@@ -722,6 +723,7 @@ const fmt = n => {
   if (!Number.isFinite(v)) return '0';
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(v);
 };
+const DAY_MS = 86400000;
 const isoNow = (ms = Date.now()) => new Date(ms).toISOString();
 const toMs = v => {
   if (typeof v === 'number') return v;
@@ -1145,6 +1147,26 @@ function getLocalizedSubscriptionStatusLabel(snapshot) {
   return tt('subscription_status_free', 'Obuna bo‘lmagan');
 }
 
+function getHeaderPlanIconMarkup(isPremium) {
+  if (isPremium) {
+    return `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M7 3h10l4 6-9 12L3 9z"></path>
+        <path d="M3 9h18"></path>
+        <path d="M9.5 3 7 9l5 12 5-12-2.5-6"></path>
+      </svg>
+    `;
+  }
+
+  return `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="7"></circle>
+      <path d="M12 8v8"></path>
+      <path d="M8 12h8"></path>
+    </svg>
+  `;
+}
+
 function openSubscriptionPanel(source = 'settings') {
   currentPaywallSource = source;
   closeOv('ov-upgrade');
@@ -1191,6 +1213,8 @@ function updateSubscriptionUI() {
 
   const itemSub = $('stg-subscription-sub');
   const itemBadge = $('stg-subscription-badge');
+  const headerPlanIndicator = $('dash-plan-indicator');
+  const headerPlanIcon = $('dash-plan-indicator-icon');
   if (itemSub) {
     itemSub.textContent = snapshot?.schemaReady === false
       ? tt('subscription_syncing', 'Tarif ma\'lumotlari sinxronlanmoqda')
@@ -1199,6 +1223,19 @@ function updateSubscriptionUI() {
   if (itemBadge) {
     itemBadge.textContent = statusBadge.label || statusText;
     itemBadge.dataset.state = statusBadge.tone || 'free';
+  }
+  if (headerPlanIndicator) {
+    const indicatorTone = snapshot?.isPremium ? 'premium' : (snapshot?.effectiveStatus === 'expired' ? 'expired' : 'free');
+    const indicatorLabel = snapshot?.schemaReady === false
+      ? tt('subscription_syncing', 'Tarif ma\'lumotlari sinxronlanmoqda')
+      : `${planText} · ${statusText}`;
+    headerPlanIndicator.dataset.state = indicatorTone;
+    headerPlanIndicator.classList.toggle('is-premium', !!snapshot?.isPremium);
+    headerPlanIndicator.setAttribute('aria-label', indicatorLabel);
+    headerPlanIndicator.setAttribute('title', indicatorLabel);
+  }
+  if (headerPlanIcon) {
+    headerPlanIcon.innerHTML = getHeaderPlanIconMarkup(!!snapshot?.isPremium);
   }
 
   const planEl = $('stg-subscription-plan');
@@ -1292,11 +1329,25 @@ function handleUpgradeRequiredError(error, fallbackFeatureKey = null, source = '
   return true;
 }
 
+function openDashboardAnalyticsPaywall() {
+  return openUpgradePaywall('deep_analytics', { source: 'dashboard_analytics' });
+}
+
+function handleDashboardAnalyticsAction() {
+  const snapshot = getSubscriptionSnapshotLocal();
+  if (snapshot?.isPremium) {
+    return openSubscriptionPanel('dashboard_analytics');
+  }
+  return openDashboardAnalyticsPaywall();
+}
+
 window.openSubscriptionPanel = openSubscriptionPanel;
 window.requestPremiumUpgrade = requestPremiumUpgrade;
 window.handlePricingPlanAction = handlePricingPlanAction;
 window.openUpgradePaywall = openUpgradePaywall;
 window.handleUpgradeRequiredError = handleUpgradeRequiredError;
+window.openDashboardAnalyticsPaywall = openDashboardAnalyticsPaywall;
+window.handleDashboardAnalyticsAction = handleDashboardAnalyticsAction;
 window.getFeatureGateResult = getFeatureGateResult;
 window.getSubscriptionSnapshot = getSubscriptionSnapshotLocal;
 
@@ -1811,8 +1862,27 @@ function routeBridge() {
   return window.__KASSA_ROUTER__ || null;
 }
 
+function isFinanceTab(tab) {
+  return tab === 'debt' || tab === 'plan';
+}
+
+function getFinanceViewTab() {
+  const el = $('view-finance');
+  const tab = String(el?.dataset?.activeTab || '').trim();
+  return tab === 'plan' ? 'plan' : 'debt';
+}
+
+function getPreferredFinanceTab() {
+  return lastFinanceTab === 'plan' ? 'plan' : getFinanceViewTab();
+}
+
+function openFinanceSection() {
+  return goTab(getPreferredFinanceTab());
+}
+
 function getActiveTabFromDom() {
   const id = document.querySelector('.view.active')?.id || '';
+  if (id === 'view-finance') return getFinanceViewTab();
   return id.startsWith('view-') ? id.slice(5) : 'dash';
 }
 
@@ -1846,12 +1916,21 @@ function goTab(tab, opts = {}) {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     document.querySelectorAll('.nb').forEach(b => b.classList.remove('active'));
 
-    const v = $('view-' + tab);
-    const n = $('nb-' + tab);
+    if (isFinanceTab(tab)) lastFinanceTab = tab;
+
+    const viewId = isFinanceTab(tab) ? 'view-finance' : `view-${tab}`;
+    const navId = isFinanceTab(tab) ? 'nb-finance' : `nb-${tab}`;
+    const v = $(viewId);
+    const n = $(navId);
+    if (isFinanceTab(tab) && v) v.dataset.activeTab = tab;
     if (v) v.classList.add('active');
     if (n) n.classList.add('active');
 
     if (tab === 'dash') renderAll();
+    if (tab === 'profile') {
+      renderProfileUI();
+      updateSettingsUI();
+    }
     if (tab === 'hist') {
       renderHistory();
       initHistScroll();
@@ -1862,6 +1941,7 @@ function goTab(tab, opts = {}) {
 }
 
 bindRouteBridge();
+window.openFinanceSection = openFinanceSection;
 
 async function loadMore() {
   return;
@@ -1914,11 +1994,382 @@ function renderAll() {
     if (tci) { tci.classList.toggle('on-i', typeFilt === 'income'); }
     if (tce) { tce.classList.toggle('on-e', typeFilt === 'expense'); }
 
+    renderDashboardWidgets(ranged);
     renderChart(shown);
     renderTrends();
   } catch (e) {
     console.error('[renderAll] Error:', e);
   }
+}
+
+function formatDashboardAmount(value, { signed = false } = {}) {
+  const amount = Number(value) || 0;
+  const prefix = signed ? (amount > 0 ? '+' : amount < 0 ? '-' : '') : '';
+  const abs = Math.abs(amount);
+  if (currency === 'USD' && rate > 0) {
+    return `${prefix}$${fmt(abs / rate)}`;
+  }
+  return `${prefix}${fmt(abs)} ${tt('suffix_uzs', "so'm")}`;
+}
+
+function getDashboardRangeLabel() {
+  if (dateFilt === 'week') return tt('dashboard_widget_range_week', 'So‘nggi hafta');
+  if (dateFilt === 'month') return tt('dashboard_widget_range_month', 'Shu oy');
+  if (dateFilt === 'custom') return tt('dashboard_widget_range_custom', 'Maxsus davr');
+  return tt('dashboard_widget_range_all', 'Barcha davr');
+}
+
+function getWeekStartMs(ms = Date.now()) {
+  const d = new Date(ms);
+  const day = d.getDay();
+  const diff = day === 0 ? 6 : day - 1;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - diff).getTime();
+}
+
+function getMonthStartMs(ms = Date.now()) {
+  const d = new Date(ms);
+  return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+}
+
+function getRowsInWindow(rows = [], start = 0, end = Date.now(), type = 'all') {
+  return (rows || []).filter((row) => {
+    const withinRange = row.ms >= start && row.ms <= end;
+    if (!withinRange) return false;
+    return type === 'all' ? true : row.type === type;
+  });
+}
+
+function groupCategoryTotals(rows = []) {
+  const grouped = {};
+  (rows || []).forEach((row) => {
+    const name = String(row?.category || '').trim() || '—';
+    grouped[name] = (grouped[name] || 0) + (Number(row?.amount) || 0);
+  });
+  return Object.entries(grouped).sort((a, b) => b[1] - a[1]);
+}
+
+function getTopCategoryInfo(rows = [], preferredType = 'expense') {
+  const preferred = rows.filter((row) => row.type === preferredType);
+  const source = preferred.length ? preferred : rows;
+  const entries = groupCategoryTotals(source);
+  if (!entries.length) return null;
+  const total = entries.reduce((sum, [, amount]) => sum + amount, 0);
+  const [name, amount] = entries[0];
+  return {
+    name,
+    amount,
+    share: total > 0 ? (amount / total) * 100 : 0,
+    type: preferred.length ? preferredType : (source[0]?.type || preferredType),
+  };
+}
+
+function summarizeDashboardRows(rows = []) {
+  let income = 0;
+  let expense = 0;
+  let absoluteTotal = 0;
+  (rows || []).forEach((row) => {
+    const amount = Number(row?.amount) || 0;
+    absoluteTotal += Math.abs(amount);
+    if (row?.type === 'income') income += amount;
+    else expense += amount;
+  });
+  return {
+    count: rows.length,
+    income,
+    expense,
+    balance: income - expense,
+    averageTicket: rows.length ? absoluteTotal / rows.length : 0,
+    topCategory: getTopCategoryInfo(rows, 'expense'),
+  };
+}
+
+function getChangeMeta(currentValue = 0, previousValue = 0) {
+  const current = Number(currentValue) || 0;
+  const previous = Number(previousValue) || 0;
+  if (current === 0 && previous === 0) {
+    return { state: 'flat', raw: 0, label: '0%' };
+  }
+  if (previous === 0) {
+    return { state: current === 0 ? 'flat' : 'new', raw: null, label: current === 0 ? '0%' : tt('dashboard_widget_new', 'Yangi') };
+  }
+  const raw = ((current - previous) / Math.abs(previous)) * 100;
+  if (!Number.isFinite(raw) || Math.abs(raw) < 0.5) {
+    return { state: 'flat', raw: 0, label: '0%' };
+  }
+  return {
+    state: raw > 0 ? 'up' : 'down',
+    raw,
+    label: `${raw > 0 ? '+' : '-'}${Math.round(Math.abs(raw))}%`,
+  };
+}
+
+function getDeltaTone(meta, metricKey = 'balance') {
+  if (!meta || meta.state === 'flat') return 'neutral';
+  if (meta.state === 'new') return 'accent';
+  const positive = metricKey === 'expense' ? meta.state === 'down' : meta.state === 'up';
+  return positive ? 'good' : 'bad';
+}
+
+function getPeriodComparison(period = 'week') {
+  const now = Date.now();
+  if (period === 'month') {
+    const currentStart = getMonthStartMs(now);
+    const previousStart = getMonthStartMs(new Date(new Date(now).getFullYear(), new Date(now).getMonth() - 1, 1).getTime());
+    const previousEnd = currentStart - 1;
+    const currentRows = getRowsInWindow(txList, currentStart, now);
+    const previousRows = getRowsInWindow(txList, previousStart, previousEnd);
+    const currentSummary = summarizeDashboardRows(currentRows);
+    const previousSummary = summarizeDashboardRows(previousRows);
+    return {
+      title: tt('dashboard_widget_this_month', 'Shu oy'),
+      compareLabel: tt('dashboard_widget_last_month_compare', 'O‘tgan oy bilan'),
+      currentRows,
+      previousRows,
+      currentSummary,
+      previousSummary,
+      deltas: {
+        income: getChangeMeta(currentSummary.income, previousSummary.income),
+        expense: getChangeMeta(currentSummary.expense, previousSummary.expense),
+        balance: getChangeMeta(currentSummary.balance, previousSummary.balance),
+      }
+    };
+  }
+
+  const currentStart = getWeekStartMs(now);
+  const previousEnd = currentStart - 1;
+  const previousStart = currentStart - (7 * DAY_MS);
+  const currentRows = getRowsInWindow(txList, currentStart, now);
+  const previousRows = getRowsInWindow(txList, previousStart, previousEnd);
+  const currentSummary = summarizeDashboardRows(currentRows);
+  const previousSummary = summarizeDashboardRows(previousRows);
+  return {
+    title: tt('dashboard_widget_this_week', 'Shu hafta'),
+    compareLabel: tt('dashboard_widget_last_week_compare', 'O‘tgan hafta bilan'),
+    currentRows,
+    previousRows,
+    currentSummary,
+    previousSummary,
+    deltas: {
+      income: getChangeMeta(currentSummary.income, previousSummary.income),
+      expense: getChangeMeta(currentSummary.expense, previousSummary.expense),
+      balance: getChangeMeta(currentSummary.balance, previousSummary.balance),
+    }
+  };
+}
+
+function getCategoryMomentum(period = 'week', limit = 3) {
+  const comparison = getPeriodComparison(period);
+  const currentEntries = groupCategoryTotals(comparison.currentRows.filter((row) => row.type === 'expense'));
+  const previousEntries = Object.fromEntries(groupCategoryTotals(comparison.previousRows.filter((row) => row.type === 'expense')));
+  const totalCurrent = currentEntries.reduce((sum, [, amount]) => sum + amount, 0);
+  return {
+    title: period === 'month'
+      ? tt('dashboard_widget_category_month', 'Oylik kategoriya ulushi')
+      : tt('dashboard_widget_category_week', 'Haftalik kategoriya ulushi'),
+    compareLabel: comparison.compareLabel,
+    items: currentEntries.slice(0, limit).map(([name, amount]) => ({
+      name,
+      amount,
+      share: totalCurrent > 0 ? (amount / totalCurrent) * 100 : 0,
+      delta: getChangeMeta(amount, previousEntries[name] || 0),
+    })),
+  };
+}
+
+function renderOverviewWidgetCard(card) {
+  return `
+    <article class="dash-widget-card ${escapeHtml(card.tone || 'neutral')}">
+      <div class="dash-widget-label">${escapeHtml(card.label)}</div>
+      <div class="dash-widget-value">${escapeHtml(card.value)}</div>
+      <div class="dash-widget-sub">${escapeHtml(card.sub)}</div>
+    </article>
+  `;
+}
+
+function renderDashboardOverview(rows = []) {
+  const grid = $('dash-overview-grid');
+  if (!grid) return;
+
+  const summary = summarizeDashboardRows(rows);
+  const topCategory = summary.topCategory;
+  const cards = [
+    {
+      tone: 'tone-balance',
+      label: tt('dashboard_widget_net_flow', 'Sof oqim'),
+      value: formatDashboardAmount(summary.balance, { signed: true }),
+      sub: getDashboardRangeLabel(),
+    },
+    {
+      tone: 'tone-count',
+      label: tt('dashboard_widget_transactions', 'Operatsiyalar'),
+      value: fmt(summary.count),
+      sub: getDashboardRangeLabel(),
+    },
+    {
+      tone: 'tone-average',
+      label: tt('dashboard_widget_avg_ticket', 'O‘rtacha chek'),
+      value: summary.count ? formatDashboardAmount(summary.averageTicket) : '—',
+      sub: tt('dashboard_widget_avg_ticket_sub', 'Har tranzaksiya bo‘yicha'),
+    },
+    {
+      tone: 'tone-category',
+      label: tt('dashboard_widget_top_category', 'Top kategoriya'),
+      value: topCategory ? topCategory.name : tt('dashboard_widget_no_category', 'Hali yo‘q'),
+      sub: topCategory
+        ? `${formatDashboardAmount(topCategory.amount)} · ${Math.round(topCategory.share)}%`
+        : tt('dashboard_widget_top_category_sub', 'Xarajatlar yig‘ilgach ko‘rinadi'),
+    },
+  ];
+
+  grid.innerHTML = cards.map(renderOverviewWidgetCard).join('');
+}
+
+function renderComparisonMetricRow(label, value, meta, metricKey) {
+  return `
+    <div class="dash-compare-row">
+      <div>
+        <div class="dash-compare-label">${escapeHtml(label)}</div>
+        <strong>${escapeHtml(formatDashboardAmount(value))}</strong>
+      </div>
+      <span class="dash-delta-badge ${escapeHtml(getDeltaTone(meta, metricKey))}">${escapeHtml(meta?.label || '0%')}</span>
+    </div>
+  `;
+}
+
+function renderComparisonCard(model) {
+  return `
+    <article class="dash-analytics-card">
+      <div class="dash-analytics-card-head">
+        <div>
+          <div class="dash-analytics-eyebrow">${escapeHtml(tt('dashboard_widget_compare_label', 'Solishtirish'))}</div>
+          <h3>${escapeHtml(model.title)}</h3>
+        </div>
+        <span class="dash-period-chip">${escapeHtml(model.compareLabel)}</span>
+      </div>
+      <div class="dash-compare-list">
+        ${renderComparisonMetricRow(tt('income', 'Kirim'), model.currentSummary.income, model.deltas.income, 'income')}
+        ${renderComparisonMetricRow(tt('expense', 'Chiqim'), model.currentSummary.expense, model.deltas.expense, 'expense')}
+        ${renderComparisonMetricRow(tt('dashboard_widget_balance', 'Balans'), model.currentSummary.balance, model.deltas.balance, 'balance')}
+      </div>
+    </article>
+  `;
+}
+
+function renderCategoryCard(model) {
+  if (!model.items.length) {
+    return `
+      <article class="dash-analytics-card">
+        <div class="dash-analytics-card-head">
+          <div>
+            <div class="dash-analytics-eyebrow">${escapeHtml(tt('expense', 'Chiqim'))}</div>
+            <h3>${escapeHtml(model.title)}</h3>
+          </div>
+          <span class="dash-period-chip">${escapeHtml(model.compareLabel)}</span>
+        </div>
+        <div class="dash-widget-empty">
+          <strong>${escapeHtml(tt('dashboard_widget_empty_title', 'Hali ma‘lumot yetarli emas'))}</strong>
+          <span>${escapeHtml(tt('dashboard_widget_empty_body', 'Xarajatlar paydo bo‘lgach kategoriya bo‘yicha ulush va o‘sish shu yerda ko‘rinadi.'))}</span>
+        </div>
+      </article>
+    `;
+  }
+
+  return `
+    <article class="dash-analytics-card">
+      <div class="dash-analytics-card-head">
+        <div>
+          <div class="dash-analytics-eyebrow">${escapeHtml(tt('expense', 'Chiqim'))}</div>
+          <h3>${escapeHtml(model.title)}</h3>
+        </div>
+        <span class="dash-period-chip">${escapeHtml(model.compareLabel)}</span>
+      </div>
+      <div class="dash-category-list">
+        ${model.items.map((item) => `
+          <div class="dash-category-row">
+            <div class="dash-category-row-head">
+              <strong>${escapeHtml(item.name)}</strong>
+              <span>${Math.round(item.share)}%</span>
+            </div>
+            <div class="dash-category-bar"><span style="width:${Math.max(10, Math.round(item.share))}%"></span></div>
+            <div class="dash-category-row-meta">
+              <span>${escapeHtml(formatDashboardAmount(item.amount))}</span>
+              <span class="dash-delta-badge ${escapeHtml(getDeltaTone(item.delta, 'expense'))}">${escapeHtml(item.delta?.label || '0%')}</span>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </article>
+  `;
+}
+
+function renderLockedAnalyticsCards() {
+  return `
+    <article class="dash-analytics-card is-locked wide">
+      <span class="subscription-status-badge premium">${escapeHtml(tt('dashboard_widget_premium_badge', 'Premium'))}</span>
+      <h3>${escapeHtml(tt('dashboard_widget_unlock_title', 'Haftalik va oylik analizni oching'))}</h3>
+      <p>${escapeHtml(tt('dashboard_widget_unlock_body', 'Premium bilan kirim va chiqimdagi foiz o‘zgarishlari, kategoriya ulushi va xarajatlar dinamikasi aniq ko‘rinadi.'))}</p>
+      <button type="button" class="bpri pricing-action-btn" onclick="openDashboardAnalyticsPaywall()">${escapeHtml(tt('subscription_upgrade_action', 'Premium ga o‘tish'))}</button>
+    </article>
+    <article class="dash-analytics-card is-preview" aria-hidden="true">
+      <div class="dash-analytics-preview-line w-40"></div>
+      <div class="dash-analytics-preview-line w-90"></div>
+      <div class="dash-analytics-preview-line w-72"></div>
+      <div class="dash-analytics-preview-line w-58"></div>
+    </article>
+    <article class="dash-analytics-card is-preview" aria-hidden="true">
+      <div class="dash-analytics-preview-line w-55"></div>
+      <div class="dash-analytics-preview-line w-82"></div>
+      <div class="dash-analytics-preview-line w-64"></div>
+      <div class="dash-analytics-preview-line w-48"></div>
+    </article>
+  `;
+}
+
+function renderDashboardAnalytics() {
+  const panel = $('dash-analytics-panel');
+  const grid = $('dash-analytics-grid');
+  const action = $('dash-analytics-action');
+  const subtitle = $('dash-analytics-subtitle');
+  if (!panel || !grid) return;
+
+  const gate = getFeatureGateResult('deep_analytics');
+  const snapshot = gate?.snapshot || getSubscriptionSnapshotLocal();
+  const isPremium = !!snapshot?.isPremium;
+
+  if (action) {
+    action.textContent = isPremium
+      ? tt('pricing_current_plan_action', 'Faol tarif')
+      : tt('subscription_upgrade_action', 'Premium ga o‘tish');
+    action.classList.toggle('is-premium', isPremium);
+  }
+
+  if (subtitle) {
+    subtitle.textContent = isPremium
+      ? tt('dashboard_analytics_sub', 'Hafta va oy bo‘yicha foydali solishtirishlar')
+      : tt('dashboard_analytics_locked_sub', 'Premium bilan hafta, oy va kategoriya bo‘yicha chuqur analiz ochiladi');
+  }
+
+  if (!gate.allowed && !gate.degraded) {
+    grid.innerHTML = renderLockedAnalyticsCards();
+    return;
+  }
+
+  const weekModel = getPeriodComparison('week');
+  const monthModel = getPeriodComparison('month');
+  const weekCategories = getCategoryMomentum('week');
+  const monthCategories = getCategoryMomentum('month');
+
+  grid.innerHTML = [
+    renderComparisonCard(weekModel),
+    renderComparisonCard(monthModel),
+    renderCategoryCard(weekCategories),
+    renderCategoryCard(monthCategories),
+  ].join('');
+}
+
+function renderDashboardWidgets(rows = []) {
+  renderDashboardOverview(rows);
+  renderDashboardAnalytics();
 }
 
 function updateBalSize(txt) {
@@ -2651,7 +3102,7 @@ function hidePinScreen() {
 function cancelPin() {
   $('pin-screen')?.classList.remove('on');
   if (pinContext === 'settings') {
-    showOv('ov-settings');
+    goTab('profile');
     updateSettingsUI();
   }
   pinContext = null;
@@ -2702,7 +3153,10 @@ function toggleBio(ev) {
 }
 
 // ─── SETTINGS ────────────────────────────────────────────
-function openSettings() { updateSettingsUI(); showOv('ov-settings'); }
+function openSettings() {
+  updateSettingsUI();
+  goTab('profile');
+}
 
 function updateSettingsUI() {
   // Legacy check for old IDs (kept for compatibility)
