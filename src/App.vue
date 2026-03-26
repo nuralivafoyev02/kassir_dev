@@ -132,7 +132,7 @@ onMounted(async () => {
   }
   await nextTick()
   setTimeout(() => {
-    preloadAllViews().catch(() => {})
+    preloadAllViews().catch(() => { })
   }, 0)
   requestAnimationFrame(() => {
     bootLegacyBundle().then(() => {
