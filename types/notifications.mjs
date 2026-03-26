@@ -1,5 +1,5 @@
 // Cloudflare Worker uchun soddalashtirilgan notification tizimi
-// Firebase/FCM olib tashlangan, faqat Telegram orqali notification
+// Faqat Telegram orqali notification
 
 export const NOTIFICATION_PROVIDER_LEGACY_WORKER = "telegram";
 export const DEFAULT_NOTIFICATION_PROVIDER = NOTIFICATION_PROVIDER_LEGACY_WORKER;
@@ -25,17 +25,4 @@ export function buildPublicNotificationConfig(env = {}) {
     NOTIFICATION_FALLBACK_PROVIDER: null,
     PUSH_NOTIFICATIONS_ENABLED: false,
   };
-}
-
-// Firebase-related functions removed - using only Telegram notifications
-export function hasFcmServerConfig(env = {}) {
-  return false;
-}
-
-export function hasFcmPublicConfig(env = {}) {
-  return false;
-}
-
-export function buildFirebaseWebConfig(env = {}) {
-  return {};
 }

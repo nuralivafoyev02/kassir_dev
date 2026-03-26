@@ -1,4 +1,4 @@
-import { NOTIFICATION_PROVIDER_FCM } from "../types/notifications.mjs";
+import { DEFAULT_NOTIFICATION_PROVIDER } from "../types/notifications.mjs";
 import { createSupabaseRestClient, sbMissingTable } from "./supabase-rest.mjs";
 
 function toIsoNow() {
@@ -44,7 +44,7 @@ export function summarizePushDevice(row) {
     id: row?.id ?? null,
     user_id: row?.user_id ?? null,
     device_key: row?.device_key ?? null,
-    provider: row?.provider ?? NOTIFICATION_PROVIDER_FCM,
+    provider: row?.provider ?? DEFAULT_NOTIFICATION_PROVIDER,
     app_kind: row?.app_kind ?? "web_app",
     permission_state: row?.permission_state ?? "default",
     is_active: row?.is_active === true,
@@ -134,7 +134,7 @@ export async function upsertPushDevice(env, registration = {}) {
     user_id: safeUserId,
     device_key: deviceKey,
     token: token || null,
-    provider: NOTIFICATION_PROVIDER_FCM,
+    provider: DEFAULT_NOTIFICATION_PROVIDER,
     platform: sanitizeText(registration.platform, 40) || "web",
     app_kind:
       sanitizeText(registration.app_kind || registration.appKind, 40) ||

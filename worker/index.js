@@ -8,7 +8,6 @@ import {
   upsertPushDevice,
 } from "../db/push-devices.mjs";
 import { sendNotification } from "../services/notifications/send-notification.mjs";
-import { buildFirebaseMessagingServiceWorkerScript } from "../services/notifications/service-worker-script.mjs";
 
 const { createTelegramOps } = telegramOpsPkg;
 
@@ -1596,7 +1595,7 @@ async function handleHealth(env) {
     notification_provider: buildPublicNotificationConfig(env).NOTIFICATION_PROVIDER,
     push_notifications_enabled: false,
     compatibility: "cloudflare-worker",
-    version: "2.0.0-firebase-removed",
+    version: "2.0.0-telegram-only",
   });
 }
 
@@ -1625,10 +1624,6 @@ async function handleClientLog(request, env) {
     getWorkerLogger(env).local("INFO", "client-log", body);
   }
   return json({ ok: true });
-}
-
-async function handleFirebaseMessagingServiceWorker(env) {
-  return js(buildFirebaseMessagingServiceWorkerScript(env));
 }
 
 async function handlePushRegister(request, env) {
@@ -2069,10 +2064,6 @@ export default {
     try {
       if (url.pathname === "/api/config.js") {
         return js(`window.__APP_CONFIG__ = ${JSON.stringify(buildAppConfig(env))};`);
-      }
-
-      if (url.pathname === "/firebase-messaging-sw.js") {
-        return handleFirebaseMessagingServiceWorker(env);
       }
 
       if (url.pathname === "/api/health") {

@@ -1,5 +1,5 @@
 // Cloudflare Worker uchun soddalashtirilgan notification tizimi
-// Faqat Telegram orqali notification (Firebase/FCM olib tashlangan)
+// Faqat Telegram orqali notification
 
 import {
   DEFAULT_NOTIFICATION_PROVIDER,

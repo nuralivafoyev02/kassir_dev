@@ -219,7 +219,7 @@ let pushNotificationState = {
   supportReason: 'pending',
   status: 'idle',
   permission: typeof Notification === 'undefined' ? 'unsupported' : Notification.permission,
-  provider: 'legacy_worker',
+  provider: 'telegram',
   publicEnabled: false,
   tokenRegistered: false,
   tokenPreview: '',
@@ -272,14 +272,11 @@ function notificationBadgeState(state = pushNotificationState) {
 
 function notificationSupportLabel(state = pushNotificationState) {
   if (state?.supported) return notifText('Mavjud', 'Доступно', 'Available');
-  if (!state?.publicEnabled && state?.provider !== 'fcm') {
-    return notifText('Legacy only', 'Только legacy', 'Legacy only');
+  if (state?.supportReason === 'legacy_only' || !state?.publicEnabled) {
+    return notifText('Faqat Telegram', 'Только Telegram', 'Telegram only');
   }
-  if (state?.supportReason === 'telegram_embedded_limit') {
-    return notifText('Telegram ichida cheklangan', 'Ограничено в Telegram', 'Limited in Telegram');
-  }
-  if (state?.supportReason === 'missing_public_config') {
-    return notifText('Firebase config yo‘q', 'Нет Firebase config', 'Firebase config missing');
+  if (state?.supportReason === 'push_disabled') {
+    return notifText('Web push o‘chiq', 'Web push выключен', 'Web push disabled');
   }
   if (state?.supportReason === 'insecure_context') {
     return notifText('HTTPS kerak', 'Нужен HTTPS', 'HTTPS required');
@@ -295,7 +292,7 @@ function notificationPermissionLabel(permission = pushNotificationState.permissi
 }
 
 function notificationProviderLabel(state = pushNotificationState) {
-  return state?.provider === 'fcm' ? 'FCM -> Legacy Worker' : 'Legacy Worker';
+  return state?.provider === 'telegram' ? 'Telegram Worker' : 'Telegram Worker';
 }
 
 function notificationDeviceLabel(state = pushNotificationState) {
@@ -303,8 +300,12 @@ function notificationDeviceLabel(state = pushNotificationState) {
     ? notifText('Mini App', 'Mini App', 'Mini App')
     : notifText('Web App', 'Web App', 'Web App');
   const tokenState = state?.tokenRegistered
-    ? `FCM token · ${state.tokenPreview || 'ready'}`
-    : notifText('Token sync qilinmagan', 'Токен не синхронизирован', 'Token not synced');
+    ? notifText(
+        `Eski push token · ${state.tokenPreview || 'saqlangan'}`,
+        `Старый push-токен · ${state.tokenPreview || 'сохранён'}`,
+        `Old push token · ${state.tokenPreview || 'stored'}`
+      )
+    : notifText('Telegram orqali ishlaydi', 'Работает через Telegram', 'Handled via Telegram');
   return `${shell} · ${tokenState}`;
 }
 
@@ -321,19 +322,11 @@ function formatNotificationSyncTime(value) {
 }
 
 function notificationHelpText(state = pushNotificationState) {
-  if (!state?.publicEnabled && state?.provider !== 'fcm') {
+  if (state?.supportReason === 'legacy_only' || !state?.publicEnabled) {
     return notifText(
-      'Hozir legacy Worker notification asosiy. FCM yoqilgach system primary provider sifatida push ishlatadi.',
-      'Сейчас основным остаётся legacy Worker. После включения FCM push станет primary provider.',
-      'Legacy Worker is currently primary. Once FCM is enabled, push becomes the primary provider.'
-    );
-  }
-
-  if (state?.supportReason === 'telegram_embedded_limit') {
-    return notifText(
-      'Telegram ichki brauzerida web push ko‘pincha ishlamaydi. Shu sabab ichkarida eski Worker/Telegram fallback saqlanadi, FCM esa tashqi brauzer yoki PWA’da ishlaydi.',
-      'Во встроенном браузере Telegram web push чаще всего не работает. Поэтому внутри Telegram остаётся старый Worker/Telegram fallback, а FCM работает во внешнем браузере или PWA.',
-      'Web push usually does not work inside the Telegram in-app browser. Because of that, the legacy Worker/Telegram fallback stays active there, while FCM works in an external browser or PWA.'
+      'Bu build Telegram Worker notification bilan ishlaydi, shuning uchun brauzer push yoqilmaydi.',
+      'Эта сборка работает через Telegram Worker notifications, поэтому браузерный push не включается.',
+      'This build uses Telegram Worker notifications, so browser push is not enabled.'
     );
   }
 
@@ -347,9 +340,9 @@ function notificationHelpText(state = pushNotificationState) {
 
   if (state?.permission === 'default') {
     return notifText(
-      'Ruxsat avtomatik so‘ralmaydi. Faqat “Yoqish” tugmasi bosilganda permission oynasi ochiladi.',
-      'Разрешение не запрашивается автоматически. Окно permission откроется только после нажатия кнопки “Включить”.',
-      'Permission is never requested automatically. The browser prompt opens only when you tap “Enable”.'
+      'Brauzer push o‘chiq, shuning uchun permission oynasi ko‘rsatilmaydi.',
+      'Браузерный push выключен, поэтому окно разрешения не показывается.',
+      'Browser push is disabled, so the permission prompt is not shown.'
     );
   }
 
@@ -366,9 +359,9 @@ function notificationHelpText(state = pushNotificationState) {
   }
 
   return notifText(
-    'Primary provider: FCM. Agar FCM config, token yoki runtime xato bersa, system avtomatik legacy Worker notificationga qaytadi.',
-    'Primary provider: FCM. Если FCM упадёт из-за конфига, токена или runtime ошибки, система автоматически переключится на legacy Worker notifications.',
-    'Primary provider: FCM. If FCM fails because of config, token, or a runtime error, the system automatically falls back to legacy Worker notifications.'
+    'Notificationlar Telegram Worker orqali yuboriladi. Agar eski brauzer push token saqlanib qolgan bo‘lsa, uni shu sahifadan tozalash mumkin.',
+    'Уведомления отправляются через Telegram Worker. Если остался старый браузерный push-токен, его можно очистить на этой странице.',
+    'Notifications are sent through the Telegram Worker. If an old browser push token remains, you can clear it from this page.'
   );
 }
 

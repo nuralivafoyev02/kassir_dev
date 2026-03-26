@@ -90,15 +90,6 @@ async function start() {
         }
       }
 
-      if (pathname === '/firebase-messaging-sw.js') {
-        const handler = loadApiHandler('firebase-messaging-sw');
-        if (handler) {
-          const mRes = mockRes(res);
-          req.body = {};
-          return handler(req, mRes);
-        }
-      }
-
       if (pathname === '/api/bot') {
         const handler = loadApiHandler('bot');
         if (handler) {
