@@ -161,6 +161,7 @@ const md2html = (t) => String(t ?? '')
 const numFmt = n => Number(n || 0).toLocaleString('ru-RU');
 const isAdmin = userId => ADMIN_IDS.has(String(userId));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const BOT_USERNAME = String(process.env.BOT_USERNAME || '').trim().replace(/^@+/, '').toLowerCase();
 let txSourceColumnSupported = null;
 let txSourceRefColumnSupported = null;
 let debtSettlementColumnSupported = null;
@@ -219,6 +220,29 @@ function shortId(v, len = 8) {
 
 function tgErr(e) {
   return e?.response?.body?.description || e?.message || "Noma'lum xatolik";
+}
+
+function parseTelegramCommand(value) {
+  const raw = String(value || '').trim();
+  if (!raw.startsWith('/')) return null;
+  const match = raw.match(/^\/([a-z0-9_]+)(?:@([a-z0-9_]+))?(?:\s+([\s\S]*))?$/i);
+  if (!match) return null;
+
+  const command = `/${String(match[1] || '').toLowerCase()}`;
+  const mention = String(match[2] || '').trim().toLowerCase();
+  const argsText = String(match[3] || '').trim();
+
+  if (mention && BOT_USERNAME && mention !== BOT_USERNAME) {
+    return null;
+  }
+
+  return {
+    command,
+    mention: mention || null,
+    argsText,
+    args: argsText ? argsText.split(/\s+/).filter(Boolean) : [],
+    raw,
+  };
 }
 
 function isMissingColumnError(error, column) {
@@ -2430,6 +2454,7 @@ module.exports = async (req, res) => {
     if (!chatId || !userId) return res.status(200).json({ ok: true });
 
     const text = (msg.text || msg.caption || '').trim();
+    const commandInfo = parseTelegramCommand(text);
 
     log('msg', {
       userId,
@@ -2502,7 +2527,7 @@ module.exports = async (req, res) => {
     }
 
     // ── Admin panel / broadcast buyruqlari ──
-    if (text === '/admin') {
+    if (commandInfo?.command === '/admin') {
       if (!isAdmin(userId)) {
         await bot.sendMessage(chatId, '⛔️ Bu buyruq faqat adminlar uchun.').catch(() => { });
         return res.status(200).json({ ok: true });
@@ -2522,22 +2547,21 @@ module.exports = async (req, res) => {
       return res.status(200).json({ ok: true });
     }
 
-    if (text.startsWith('/premium ') || text.startsWith('/freeplan ') || text.startsWith('/subinfo ')) {
+    if (commandInfo && ['/premium', '/freeplan', '/subinfo'].includes(commandInfo.command)) {
       if (!isAdmin(userId)) {
         await bot.sendMessage(chatId, '⛔️ Bu buyruq faqat adminlar uchun.').catch(() => { });
         return res.status(200).json({ ok: true });
       }
 
-      const parts = String(text || '').trim().split(/\s+/);
-      const command = parts[0];
-      const targetUserId = Number(parts[1] || 0);
+      const command = commandInfo.command;
+      const targetUserId = Number(commandInfo.args[0] || 0);
       if (!targetUserId) {
         await bot.sendMessage(chatId, '⚠️ Format: /premium <user_id> [kun], /freeplan <user_id>, /subinfo <user_id>').catch(() => { });
         return res.status(200).json({ ok: true });
       }
 
       if (command === '/premium') {
-        const durationDays = Math.max(1, Number(parts[2] || 30));
+        const durationDays = Math.max(1, Number(commandInfo.args[1] || 30));
         const payload = buildSubscriptionUpdatePayload({ planCode: 'premium_monthly', status: 'active', durationDays });
         const { error } = await updateUserSubscription(targetUserId, payload);
         if (error) {
@@ -2578,15 +2602,15 @@ module.exports = async (req, res) => {
     }
 
 
-    if (text === '/notif' || text.startsWith('/notif ')) {
+    if (commandInfo?.command === '/notif') {
       if (!isAdmin(userId)) {
         await bot.sendMessage(chatId, '⛔️ Bu buyruq faqat adminlar uchun.').catch(() => { });
         return res.status(200).json({ ok: true });
       }
 
-      const full = String(text || '').trim();
-      const parts = full.split(/\s+/);
-      const sub = (parts[1] || '').toLowerCase();
+      const full = `${commandInfo.command}${commandInfo.argsText ? ` ${commandInfo.argsText}` : ''}`;
+      const parts = [commandInfo.command, ...commandInfo.args];
+      const sub = String(commandInfo.args[0] || '').toLowerCase();
 
       try {
         if (!sub || sub === 'list') {
@@ -2722,7 +2746,7 @@ module.exports = async (req, res) => {
     }
 
     // ── Admin Broadcast (/message ...) ──
-    if (text.startsWith('/message')) {
+    if (commandInfo?.command === '/message') {
       if (!isAdmin(userId)) {
         await bot.sendMessage(chatId, '⛔️ Bu buyruq faqat adminlar uchun.').catch(() => { });
         return res.status(200).json({ ok: true });
@@ -2731,7 +2755,7 @@ module.exports = async (req, res) => {
       const rawText = msg.text || msg.caption || '';
       const entities = msg.entities || msg.caption_entities || [];
       const parts = rawText.split(/\s*\n--\n\s*/);
-      let broadcastText = parts[0].replace(/^\/message\s*/, '').trim();
+      let broadcastText = parts[0].replace(/^\/message(?:@[a-z0-9_]+)?\s*/i, '').trim();
       const prefixLen = rawText.indexOf(broadcastText);
 
       let reply_markup = null;
