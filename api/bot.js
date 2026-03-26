@@ -192,7 +192,15 @@ async function transcribeVoiceBuffer(buffer) {
   const raw = await resp.text();
   let data;
   try { data = JSON.parse(raw); } catch { data = { raw }; }
-  if (!resp.ok) throw new Error(data?.error?.message || data?.raw || `Whisper HTTP ${resp.status}`);
+  if (!resp.ok) {
+    const error = new Error(data?.error?.message || data?.raw || `Whisper HTTP ${resp.status}`);
+    error.status = resp.status;
+    error.response = { data };
+    if (resp.status === 401) {
+      disableOpenAI('auth_error', { permanent: true, minutes: 12 * 60 });
+    }
+    throw error;
+  }
   return String(data?.text || '').trim();
 }
 
@@ -229,6 +237,26 @@ function isQuotaOrRateLimitError(error) {
   const status = Number(error?.status || error?.code || error?.response?.status || 0);
   const msg = String(error?.message || error?.response?.data?.error?.message || '').toLowerCase();
   return status === 429 || msg.includes('insufficient_quota') || msg.includes('current quota') || msg.includes('rate limit') || msg.includes('too many requests');
+}
+
+function isOpenAIAuthError(error) {
+  const status = Number(error?.status || error?.code || error?.response?.status || 0);
+  const msg = String(error?.message || error?.response?.data?.error?.message || '').toLowerCase();
+  return status === 401
+    || msg.includes('incorrect api key provided')
+    || msg.includes('invalid api key')
+    || msg.includes('authentication')
+    || msg.includes('unauthorized');
+}
+
+function disableOpenAI(reason = 'disabled', { permanent = false, minutes = 30 } = {}) {
+  openaiDisabledUntil = Date.now() + (Math.max(1, Number(minutes) || 30) * 60 * 1000);
+  if (permanent) openai = null;
+  warn('openai-disabled', {
+    reason,
+    permanent,
+    disabledUntil: new Date(openaiDisabledUntil).toISOString(),
+  });
 }
 
 function isDuplicateKeyError(error) {
@@ -1044,6 +1072,13 @@ function buildBroadcastGuideText() {
 <b>/freeplan user_id</b> — userni bepul tarifga qaytaradi
 <b>/subinfo user_id</b> — user obunasini ko'rsatadi
 
+<b>Premium berish tartibi:</b>
+1. <code>/subinfo user_id</code>
+2. <code>/premium user_id 30</code>
+3. <code>/subinfo user_id</code>
+
+<b>Muhim:</b> hozirgi <code>/premium</code> buyrug'i muddatni <b>hozirgi vaqtdan</b> boshlab beradi.
+
 <b>Tugmali broadcast:</b>
 <code>/message Assalomu alaykum
 --
@@ -1349,8 +1384,12 @@ Agar tushunarsiz bo'lsa, null qaytaring.`;
       isUSD: !!data.isUSD
     };
   } catch (e) {
+    if (isOpenAIAuthError(e)) {
+      disableOpenAI('auth_error', { permanent: true, minutes: 12 * 60 });
+      return null;
+    }
     if (isQuotaOrRateLimitError(e)) {
-      openaiDisabledUntil = Date.now() + 30 * 60 * 1000;
+      disableOpenAI(e?.message || 'quota/rate-limit', { minutes: 30 });
       warn('gpt-parse-fallback', { reason: e?.message || 'quota/rate-limit', disabledUntil: new Date(openaiDisabledUntil).toISOString() });
       return null;
     }
@@ -2968,7 +3007,13 @@ module.exports = async (req, res) => {
       const proc = await bot.sendMessage(chatId, '🎙 Ovozli xabar qabul qilindi...').catch(() => null);
 
       try {
-        if (!openai) throw new Error('OpenAI configured emas');
+        if (!openai || (openaiDisabledUntil && Date.now() < openaiDisabledUntil)) {
+          const voiceDisabledText = OAI_KEY
+            ? '🤖 Ovozli tahlil hozircha vaqtincha ishlamayapti. Matn orqali yozib yuboring.'
+            : '🤖 Ovozli tahlil yoqilmagan. Matn orqali yozib yuboring.';
+          if (proc) await bot.editMessageText(voiceDisabledText, { chat_id: chatId, message_id: proc.message_id }).catch(() => { });
+          return res.status(200).json({ ok: true });
+        }
 
         if (proc) await bot.editMessageText('⏳ Ovoz tahlil qilinmoqda (Whisper)...', { chat_id: chatId, message_id: proc.message_id }).catch(() => { });
 
@@ -2998,7 +3043,10 @@ module.exports = async (req, res) => {
 
       } catch (e) {
         await logErr('voice', e, { userId });
-        if (proc) await bot.editMessageText('😕 Ovozli xabarni qayta ishlashda xatolik yuz berdi. Matn orqali yozib yuboring.', { chat_id: chatId, message_id: proc.message_id }).catch(() => { });
+        const voiceErrorText = isOpenAIAuthError(e)
+          ? '🔐 OpenAI kaliti noto‘g‘ri yoki bekor qilingan. Hozircha matn orqali yozib yuboring.'
+          : '😕 Ovozli xabarni qayta ishlashda xatolik yuz berdi. Matn orqali yozib yuboring.';
+        if (proc) await bot.editMessageText(voiceErrorText, { chat_id: chatId, message_id: proc.message_id }).catch(() => { });
       } finally {
       }
       return res.status(200).json({ ok: true });
